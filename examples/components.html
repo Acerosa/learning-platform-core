@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Learning Platform Core component preview</title>
+  <link rel="stylesheet" href="../dist/theme.css">
+  <style>
+    body { margin: 0; background: var(--lp-background); color: var(--lp-text); font-family: var(--lp-font); }
+    main { width: min(70rem, calc(100% - 2rem)); margin: 2rem auto; }
+    .preview-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr)); gap: 1rem; }
+  </style>
+</head>
+<body>
+  <div data-navigation></div>
+  <div data-learner-header></div>
+  <main>
+    <h1>Shared component preview</h1>
+    <div class="preview-grid" data-cards></div>
+    <p><button class="lp-button" type="button" data-open-dialog>Open example dialog</button></p>
+  </main>
+  <script src="../dist/learning-platform-core.iife.js"></script>
+  <script>
+    const core = window.LearningPlatformCore;
+    const config = core.createPlatformConfig({
+      hubCode: "component-preview",
+      hubName: "Example Learning Hub",
+      navigation: [
+        { id: "home", path: "./components.html" },
+        { id: "learning", path: "#learning" },
+        { id: "activities", path: "#activities" },
+        { id: "resources", path: "#resources" },
+        { id: "progress", path: "#progress" },
+        { id: "account", path: "#account" }
+      ]
+    });
+    const theme = core.createThemeService();
+    document.querySelector("[data-navigation]").append(
+      core.createNavigationShell({ config, currentId: "home", themeService: theme }).element
+    );
+    document.querySelector("[data-learner-header]").append(
+      core.createLearnerHeader({
+        config,
+        authService: { signOut: async () => {} },
+        learnerContext: {
+          subscribe(listener) {
+            listener({
+              status: "authenticated",
+              context: {
+                fullName: "Example Learner",
+                yearGroup: "Year 1",
+                contactEmail: "learner@example.test"
+              }
+            });
+            return () => {};
+          }
+        }
+      }).element
+    );
+    document.querySelector("[data-cards]").append(
+      core.createProgressCard({ title: "Learning progress", completed: 3, total: 5 }),
+      core.createActivityCard({ title: "Practice activity", activityType: "Reflection", duration: "15 minutes", description: "Use a shared activity card without subject assumptions.", href: "#activity" }),
+      core.createErrorBanner({ message: "A learner-safe error appears here without backend details." })
+    );
+    const modal = core.createModal({ title: "Example dialog" });
+    modal.body.append(core.createEmptyState({ heading: "Dialog content", message: "Keyboard focus remains inside this modal until it closes." }));
+    document.body.append(modal.element);
+    document.querySelector("[data-open-dialog]").addEventListener("click", (event) => modal.open(event.currentTarget));
+  </script>
+</body>
+</html>

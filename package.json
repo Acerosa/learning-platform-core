@@ -1,0 +1,53 @@
+{
+  "name": "@learning-platform/core",
+  "version": "0.1.0",
+  "description": "Framework-free shared frontend services and UI for Learning Platform learner hubs.",
+  "type": "module",
+  "main": "./dist/learning-platform-core.esm.js",
+  "module": "./dist/learning-platform-core.esm.js",
+  "browser": "./dist/learning-platform-core.iife.js",
+  "exports": {
+    ".": "./dist/learning-platform-core.esm.js",
+    "./conformance": "./dist/conformance.esm.js",
+    "./theme.css": "./dist/theme.css",
+    "./tokens.css": "./dist/tokens.css",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "src",
+    "docs",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --test",
+    "test:conformance": "node --test tests/conformance",
+    "check": "npm run build && npm test"
+  },
+  "keywords": [
+    "learning-platform",
+    "supabase",
+    "github-pages",
+    "accessibility"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "peerDependencies": {
+    "@supabase/supabase-js": "^2.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@supabase/supabase-js": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "axe-core": "^4.10.3",
+    "esbuild": "^0.25.9",
+    "jsdom": "^26.1.0"
+  }
+}

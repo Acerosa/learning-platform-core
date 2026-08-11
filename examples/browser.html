@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Learning Platform Core browser example</title>
+  <link rel="stylesheet" href="../dist/theme.css">
+</head>
+<body>
+  <div data-navigation></div>
+  <div data-learner-header></div>
+  <main>
+    <h1>Browser integration example</h1>
+    <p>Replace the public configuration placeholders and load an exact audited Supabase JS 2.x build before the core IIFE.</p>
+  </main>
+  <!-- Load an exact, locally managed Supabase JS 2.x browser build here. -->
+  <script src="../dist/learning-platform-core.iife.js"></script>
+  <script>
+    if (window.supabase) {
+      const core = window.LearningPlatformCore;
+      const platform = core.createPlatform({
+        hubCode: "example-hub",
+        hubName: "Example Hub",
+        supabase: {
+          projectUrl: "https://PROJECT.supabase.co",
+          publishableKey: "PUBLIC_PUBLISHABLE_KEY"
+        },
+        navigation: [
+          { id: "home", path: "./" },
+          { id: "account", path: "./account/" }
+        ]
+      });
+      document.querySelector("[data-navigation]").append(
+        core.createNavigationShell({ config: platform.config, themeService: platform.theme }).element
+      );
+      document.querySelector("[data-learner-header]").append(
+        core.createLearnerHeader({ learnerContext: platform.learner, authService: platform.auth, config: platform.config }).element
+      );
+      platform.initialise();
+    }
+  </script>
+</body>
+</html>
