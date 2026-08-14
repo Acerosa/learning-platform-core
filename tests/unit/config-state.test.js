@@ -16,6 +16,26 @@ test("platform config supplies all standard navigation definitions and hub brand
   assert.equal(config.navigation.find((item) => item.id === "labs").enabled, true);
   assert.equal(config.theme.primary, "#123456");
   assert.equal(config.apiSchema, "api");
+  assert.equal(config.navigationMode, "standard");
+});
+
+test("as-supplied navigation keeps hub order without injecting unused standard routes", () => {
+  const config = createPlatformConfig({
+    hubCode: "sample-hub",
+    hubName: "Sample Hub",
+    navigationMode: "as-supplied",
+    navigation: [
+      { id: "home", label: "Home", path: "./" },
+      { id: "learning", label: "Weeks", path: "./weeks/" },
+      { id: "assignments", label: "Assignments", path: "./assignments/" }
+    ]
+  });
+  assert.deepEqual(config.navigation.map((item) => item.id), ["home", "learning", "assignments"]);
+  assert.equal(config.navigationMode, "as-supplied");
+  assert.throws(
+    () => createPlatformConfig({ hubCode: "hub", hubName: "Hub", navigationMode: "custom" }),
+    (error) => error.code === "INVALID_NAVIGATION_MODE"
+  );
 });
 
 test("platform config rejects private schemas and invalid branding", () => {

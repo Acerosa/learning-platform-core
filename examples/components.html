@@ -22,16 +22,17 @@
   <script src="../dist/learning-platform-core.iife.js"></script>
   <script>
     const core = window.LearningPlatformCore;
-    const config = core.createPlatformConfig({
+    const config = Object.freeze({
       hubCode: "component-preview",
       hubName: "Example Learning Hub",
+      accountPath: "#account",
       navigation: [
-        { id: "home", path: "./components.html" },
-        { id: "learning", path: "#learning" },
-        { id: "activities", path: "#activities" },
-        { id: "resources", path: "#resources" },
-        { id: "progress", path: "#progress" },
-        { id: "account", path: "#account" }
+        { id: "home", label: "Home", path: "./components.html", enabled: true },
+        { id: "learning", label: "Learning", path: "#learning", enabled: true },
+        { id: "activities", label: "Activities", path: "#activities", enabled: true },
+        { id: "resources", label: "Resources", path: "#resources", enabled: true },
+        { id: "progress", label: "Progress", path: "#progress", enabled: true },
+        { id: "account", label: "Account", path: "#account", enabled: true }
       ]
     });
     const theme = core.createThemeService();
@@ -59,8 +60,20 @@
     );
     document.querySelector("[data-cards]").append(
       core.createProgressCard({ title: "Learning progress", completed: 3, total: 5 }),
-      core.createActivityCard({ title: "Practice activity", activityType: "Reflection", duration: "15 minutes", description: "Use a shared activity card without subject assumptions.", href: "#activity" }),
-      core.createErrorBanner({ message: "A learner-safe error appears here without backend details." })
+      core.createActivityCard({ title: "Practice activity", activityType: "Reflection", duration: "15 minutes", description: "Use a shared activity card without subject assumptions.", href: "#activity", state: "not-started" }),
+      core.createErrorBanner({ message: "A learner-safe error appears here without backend details." }),
+      core.createCallout({ tone: "info", title: "Shared callout", message: "Use configuration, not hub branches." }),
+      core.createStatusBadge({ status: "available" })
+    );
+    document.querySelector("main").append(
+      core.createBreadcrumbs({ items: [{ label: "Home", href: "./components.html" }, { label: "Preview" }] }),
+      core.createWeekView({
+        week: { id: "week-1", teachingWeek: 1, title: "Example week", status: "available" },
+        learningOutcomes: [{ id: "LO1", title: "Example outcome" }],
+        context: { type: "assignment", heading: "Assignment context", items: [{ label: "Assignment", value: "Example workspace" }] },
+        sessions: [{ id: "session-1", title: "Session 1", kind: "session", defaultOpen: true, activities: [{ title: "Starter", href: "#activity" }] }],
+        features: { showProgress: false }
+      })
     );
     const modal = core.createModal({ title: "Example dialog" });
     modal.body.append(core.createEmptyState({ heading: "Dialog content", message: "Keyboard focus remains inside this modal until it closes." }));

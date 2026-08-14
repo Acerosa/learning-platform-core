@@ -26,10 +26,10 @@ export function createPlatform(options = {}, dependencies = {}) {
   const auth = createAuthService({ client, logger });
   const session = createSessionService(auth);
   const profile = createProfileService(api);
-  const enrolment = createEnrolmentService(api);
-  const assignment = createAssignmentService(api);
+  const enrolments = createEnrolmentService(api);
+  const assignments = createAssignmentService(api);
   const progress = createProgressService(api);
-  const learner = createLearnerContext({ authService: auth, profileService: profile, enrolmentService: enrolment });
+  const learner = createLearnerContext({ authService: auth, profileService: profile, enrolmentService: enrolments });
   const onboarding = createOnboardingService({
     api,
     authService: auth,
@@ -42,7 +42,7 @@ export function createPlatform(options = {}, dependencies = {}) {
     storage: dependencies.sessionStorage,
     crypto: dependencies.crypto
   });
-  const flags = createFeatureFlags(config.features);
+  const features = createFeatureFlags(config.features);
   const state = createPlatformState("loading");
   const theme = dependencies.document === null ? null : createThemeService({
     document: dependencies.document || globalThis.document,
@@ -72,8 +72,8 @@ export function createPlatform(options = {}, dependencies = {}) {
       return;
     }
     try {
-      const assignments = await assignment.getAssignments();
-      state.transition(Array.isArray(assignments) && assignments.length ? "ready" : "no-assignments");
+      const assignmentRows = await assignments.getAssignments();
+      state.transition(Array.isArray(assignmentRows) && assignmentRows.length ? "ready" : "no-assignments");
     } catch (error) {
       state.transition("error", error);
     }
@@ -102,21 +102,18 @@ export function createPlatform(options = {}, dependencies = {}) {
 
   return Object.freeze({
     config,
-    client,
-    api,
     auth,
     session,
     learner,
     onboarding,
     profile,
-    enrolment,
-    assignment,
+    enrolments,
+    assignments,
     progress,
     submission,
     state,
     theme,
-    flags,
-    logger,
+    features,
     initialise,
     destroy
   });

@@ -20,50 +20,48 @@ var LearningPlatformCore = (() => {
   // src/index.js
   var index_exports = {};
   __export(index_exports, {
+    CONTEXT_TYPES: () => CONTEXT_TYPES,
     ERROR_CATEGORIES: () => ERROR_CATEGORIES,
     EVIDENCE_TYPES: () => EVIDENCE_TYPES,
+    LEARNER_ACTIVITY_STATES: () => LEARNER_ACTIVITY_STATES,
+    NAVIGATION_MODES: () => NAVIGATION_MODES,
     PLATFORM_STATES: () => PLATFORM_STATES,
     PlatformError: () => PlatformError,
+    SESSION_KINDS: () => SESSION_KINDS,
+    SESSION_KIND_LABELS: () => SESSION_KIND_LABELS,
     STANDARD_NAVIGATION: () => STANDARD_NAVIGATION,
+    STATUS_TONES: () => STATUS_TONES,
     THEME_EVENT: () => THEME_EVENT,
     THEME_MODES: () => THEME_MODES,
+    WEEK_UI_FEATURES: () => WEEK_UI_FEATURES,
     applyBranding: () => applyBranding,
     assertConformant: () => assertConformant,
-    assertSecureSubmission: () => assertSecureSubmission,
     createAccountDialog: () => createAccountDialog,
     createActivityCard: () => createActivityCard,
-    createAssignmentService: () => createAssignmentService,
-    createAuthService: () => createAuthService,
+    createBreadcrumbs: () => createBreadcrumbs,
+    createCallout: () => createCallout,
+    createContextPanel: () => createContextPanel,
     createEmptyState: () => createEmptyState,
-    createEnrolmentService: () => createEnrolmentService,
     createErrorBanner: () => createErrorBanner,
-    createFeatureFlags: () => createFeatureFlags,
-    createLearnerApi: () => createLearnerApi,
-    createLearnerContext: () => createLearnerContext,
+    createHubShell: () => createHubShell,
     createLearnerHeader: () => createLearnerHeader,
+    createLearningOutcomeBadge: () => createLearningOutcomeBadge,
     createLoadingState: () => createLoadingState,
-    createLogger: () => createLogger,
     createModal: () => createModal,
     createNavigationShell: () => createNavigationShell,
-    createOnboardingService: () => createOnboardingService,
     createOnboardingView: () => createOnboardingView,
     createPlatform: () => createPlatform,
-    createPlatformConfig: () => createPlatformConfig,
-    createPlatformState: () => createPlatformState,
-    createProfileService: () => createProfileService,
     createProgressCard: () => createProgressCard,
-    createProgressService: () => createProgressService,
-    createSessionService: () => createSessionService,
-    createSubmissionService: () => createSubmissionService,
-    createSupabaseClient: () => createSupabaseClient,
+    createSessionSection: () => createSessionSection,
+    createStatusBadge: () => createStatusBadge,
     createThemeService: () => createThemeService,
     createToastRegion: () => createToastRegion,
-    derivePlatformState: () => derivePlatformState,
+    createWeekHeader: () => createWeekHeader,
+    createWeekNavigation: () => createWeekNavigation,
+    createWeekView: () => createWeekView,
     evidence: () => evidence,
-    mapPlatformError: () => mapPlatformError,
-    redact: () => redact,
-    runConformanceChecks: () => runConformanceChecks,
-    toApiResponse: () => toApiResponse
+    mergeWeekUiFeatures: () => mergeWeekUiFeatures,
+    runConformanceChecks: () => runConformanceChecks
   });
 
   // src/core/errors/platform-error.js
@@ -144,6 +142,7 @@ var LearningPlatformCore = (() => {
   }
 
   // src/core/config/platform-config.js
+  var NAVIGATION_MODES = Object.freeze(["standard", "as-supplied"]);
   var STANDARD_NAVIGATION = Object.freeze([
     Object.freeze({ id: "home", label: "Home" }),
     Object.freeze({ id: "learning", label: "Learning" }),
@@ -157,31 +156,57 @@ var LearningPlatformCore = (() => {
   function cleanString(value) {
     return typeof value === "string" ? value.trim() : "";
   }
-  function navigationFrom(items = []) {
+  function navigationItem(item2, defaults = {}) {
+    const id = cleanString(item2?.id) || defaults.id;
+    const label = cleanString(item2?.label) || defaults.label;
+    const path = cleanString(item2?.path);
+    if (!id || !label) {
+      throw new PlatformError({ code: "INVALID_NAVIGATION_ITEM", category: "configuration" });
+    }
+    return Object.freeze({
+      id,
+      label,
+      path,
+      enabled: item2.enabled !== false && Boolean(path)
+    });
+  }
+  function navigationFrom(items = [], mode = "standard") {
     if (!Array.isArray(items)) {
       throw new PlatformError({ code: "INVALID_NAVIGATION", category: "configuration" });
+    }
+    if (mode === "as-supplied") {
+      if (!items.length) {
+        throw new PlatformError({ code: "INVALID_NAVIGATION", category: "configuration" });
+      }
+      return Object.freeze(items.map((item2) => {
+        const parsed = navigationItem(item2);
+        if (!parsed.path) {
+          throw new PlatformError({ code: "INVALID_NAVIGATION_ITEM", category: "configuration" });
+        }
+        return parsed;
+      }));
     }
     const supplied = new Map(items.map((item2) => [cleanString(item2?.id), item2]));
     const standard = STANDARD_NAVIGATION.map((definition) => {
       const item2 = supplied.get(definition.id) || {};
       supplied.delete(definition.id);
-      return Object.freeze({
-        ...definition,
-        label: cleanString(item2.label) || definition.label,
-        path: cleanString(item2.path),
-        enabled: item2.enabled !== false && Boolean(cleanString(item2.path))
-      });
+      return navigationItem({ ...definition, ...item2, id: definition.id, label: cleanString(item2.label) || definition.label }, definition);
     });
     const additions = Array.from(supplied.values()).map((item2) => {
-      const id = cleanString(item2?.id);
-      const label = cleanString(item2?.label);
-      const path = cleanString(item2?.path);
-      if (!id || !label || !path) {
+      const parsed = navigationItem(item2);
+      if (!parsed.path) {
         throw new PlatformError({ code: "INVALID_NAVIGATION_ITEM", category: "configuration" });
       }
-      return Object.freeze({ id, label, path, enabled: item2.enabled !== false });
+      return parsed;
     });
     return Object.freeze([...standard, ...additions]);
+  }
+  function navigationModeFrom(value) {
+    const mode = cleanString(value) || "standard";
+    if (!NAVIGATION_MODES.includes(mode)) {
+      throw new PlatformError({ code: "INVALID_NAVIGATION_MODE", category: "configuration" });
+    }
+    return mode;
   }
   function safeBrandColour(value, fallback) {
     const colour = cleanString(value);
@@ -203,13 +228,15 @@ var LearningPlatformCore = (() => {
     if (options.apiSchema && options.apiSchema !== "api") {
       throw new PlatformError({ code: "PRIVATE_SCHEMA_PROHIBITED", category: "configuration" });
     }
+    const navigationMode = navigationModeFrom(options.navigationMode);
     return Object.freeze({
       hubCode,
       hubName,
       platformVersion: cleanString(options.platformVersion) || "0.1",
       apiSchema: "api",
       accountPath: cleanString(options.accountPath) || "./account/",
-      navigation: navigationFrom(options.navigation),
+      navigationMode,
+      navigation: navigationFrom(options.navigation, navigationMode),
       features: Object.freeze({ ...options.features || {} }),
       theme: Object.freeze({
         primary: safeBrandColour(options.theme?.primary, "#315b7d"),
@@ -312,27 +339,6 @@ var LearningPlatformCore = (() => {
     "offline",
     "error"
   ]);
-  function derivePlatformState({
-    online = true,
-    loading = false,
-    signingIn = false,
-    session = null,
-    registrationRequired = false,
-    profile = null,
-    enrolments = [],
-    assignments = [],
-    error = null
-  } = {}) {
-    if (error) return "error";
-    if (!online) return "offline";
-    if (loading) return "loading";
-    if (signingIn) return "signing-in";
-    if (!session) return registrationRequired ? "registration-required" : "signed-out";
-    if (!profile) return "onboarding-required";
-    if (!Array.isArray(enrolments) || enrolments.length === 0) return "no-enrolment";
-    if (!Array.isArray(assignments) || assignments.length === 0) return "no-assignments";
-    return "ready";
-  }
   function createPlatformState(initial = "loading") {
     if (!PLATFORM_STATES.includes(initial)) {
       throw new PlatformError({ code: "INVALID_PLATFORM_STATE", category: "configuration" });
@@ -1087,10 +1093,10 @@ var LearningPlatformCore = (() => {
     const auth = createAuthService({ client, logger });
     const session = createSessionService(auth);
     const profile = createProfileService(api);
-    const enrolment = createEnrolmentService(api);
-    const assignment = createAssignmentService(api);
+    const enrolments = createEnrolmentService(api);
+    const assignments = createAssignmentService(api);
     const progress = createProgressService(api);
-    const learner = createLearnerContext({ authService: auth, profileService: profile, enrolmentService: enrolment });
+    const learner = createLearnerContext({ authService: auth, profileService: profile, enrolmentService: enrolments });
     const onboarding = createOnboardingService({
       api,
       authService: auth,
@@ -1103,7 +1109,7 @@ var LearningPlatformCore = (() => {
       storage: dependencies.sessionStorage,
       crypto: dependencies.crypto
     });
-    const flags = createFeatureFlags(config.features);
+    const features = createFeatureFlags(config.features);
     const state = createPlatformState("loading");
     const theme = dependencies.document === null ? null : createThemeService({
       document: dependencies.document || globalThis.document,
@@ -1124,14 +1130,14 @@ var LearningPlatformCore = (() => {
       if (learnerState.status === "error") state.transition("error", learnerState.error);
       if (learnerState.status !== "authenticated") return;
       state.transition("authenticated");
-      const enrolments = learnerState.context?.enrolments || [];
-      if (enrolments.length === 0) {
+      const enrolments2 = learnerState.context?.enrolments || [];
+      if (enrolments2.length === 0) {
         state.transition("no-enrolment");
         return;
       }
       try {
-        const assignments = await assignment.getAssignments();
-        state.transition(Array.isArray(assignments) && assignments.length ? "ready" : "no-assignments");
+        const assignmentRows = await assignments.getAssignments();
+        state.transition(Array.isArray(assignmentRows) && assignmentRows.length ? "ready" : "no-assignments");
       } catch (error) {
         state.transition("error", error);
       }
@@ -1156,24 +1162,62 @@ var LearningPlatformCore = (() => {
     }
     return Object.freeze({
       config,
-      client,
-      api,
       auth,
       session,
       learner,
       onboarding,
       profile,
-      enrolment,
-      assignment,
+      enrolments,
+      assignments,
       progress,
       submission,
       state,
       theme,
-      flags,
-      logger,
+      features,
       initialise,
       destroy
     });
+  }
+
+  // src/ui/contracts.js
+  var CONTEXT_TYPES = Object.freeze(["exam", "assignment", "project"]);
+  var SESSION_KINDS = Object.freeze([
+    "session",
+    "independent-study",
+    "homework",
+    "revision",
+    "retrieval"
+  ]);
+  var SESSION_KIND_LABELS = Object.freeze({
+    session: "Session",
+    "independent-study": "Independent study",
+    homework: "Homework",
+    revision: "Revision",
+    retrieval: "Retrieval"
+  });
+  var LEARNER_ACTIVITY_STATES = Object.freeze(["not-started", "in-progress", "completed"]);
+  var STATUS_TONES = Object.freeze(["available", "planned", "progress", "completed"]);
+  var WEEK_UI_FEATURES = Object.freeze({
+    showTitle: true,
+    showLearningOutcomes: true,
+    showAssignmentContext: true,
+    showExamContext: true,
+    showProjectContext: true,
+    showIndependentStudy: true,
+    showProgress: true
+  });
+  function mergeWeekUiFeatures(features = {}) {
+    return Object.freeze({ ...WEEK_UI_FEATURES, ...features });
+  }
+  function shouldShowContext(features, contextType) {
+    if (!contextType) return false;
+    if (contextType === "assignment") return features.showAssignmentContext !== false;
+    if (contextType === "exam") return features.showExamContext !== false;
+    if (contextType === "project") return features.showProjectContext !== false;
+    return true;
+  }
+  function isIndependentKind(kind) {
+    return kind === "independent-study" || kind === "homework";
   }
 
   // src/ui/dom.js
@@ -1251,66 +1295,98 @@ var LearningPlatformCore = (() => {
     document = globalThis.document,
     config,
     currentId = "home",
-    themeService = null
+    currentIds = [],
+    themeService = null,
+    brandTitle,
+    brandTagline,
+    actions = null
   } = {}) {
     const nav = createElement(document, "nav", { className: "lp-navigation", "aria-label": "Main navigation" });
     const bar = createElement(document, "div", { className: "lp-navigation__bar" });
     const home = config.navigation.find((item2) => item2.id === "home" && item2.enabled);
     const brand = createElement(document, "a", {
       className: "lp-navigation__brand",
-      href: home?.path || "./",
-      text: config.hubName
+      href: home?.path || "./"
     });
+    brand.append(createElement(document, "span", {
+      className: "lp-navigation__brand-title",
+      text: brandTitle || config.hubName
+    }));
+    if (brandTagline) {
+      brand.append(createElement(document, "span", {
+        className: "lp-navigation__brand-tagline",
+        text: brandTagline
+      }));
+    }
+    const listId = `lp-navigation-list-${config.hubCode}`;
     const toggle = createElement(document, "button", {
       className: "lp-button lp-button--secondary lp-navigation__toggle",
       type: "button",
       text: "Menu",
       "aria-expanded": "false",
-      "aria-controls": `lp-navigation-list-${config.hubCode}`
+      "aria-controls": listId,
+      "aria-label": "Open main menu"
     });
     const list = createElement(document, "ul", {
       className: "lp-navigation__list",
-      id: `lp-navigation-list-${config.hubCode}`,
+      id: listId,
       dataset: { open: "false" }
     });
+    const current = new Set([currentId, ...currentIds].filter(Boolean));
     config.navigation.filter((item2) => item2.enabled).forEach((item2) => {
       const link = createElement(document, "a", {
         className: "lp-navigation__link",
         href: item2.path,
         text: item2.label,
-        "aria-current": item2.id === currentId ? "page" : null
+        "aria-current": current.has(item2.id) ? "page" : null
       });
       list.append(createElement(document, "li", {}, link));
     });
     bar.append(brand, toggle, list);
     if (themeService) {
-      const label = createElement(document, "label", { text: "Theme" });
+      const label = createElement(document, "label", { className: "lp-theme-control", text: "Theme" });
       const select = createElement(document, "select", { "aria-label": "Theme preference" });
-      themeService.modes.forEach((mode) => select.append(createElement(document, "option", { value: mode, text: mode[0].toUpperCase() + mode.slice(1) })));
+      themeService.modes.forEach((mode) => select.append(createElement(document, "option", {
+        value: mode,
+        text: mode[0].toUpperCase() + mode.slice(1)
+      })));
       select.value = themeService.getPreference();
       select.addEventListener("change", () => themeService.setPreference(select.value));
       label.append(select);
       bar.append(label);
     }
+    if (actions) {
+      actions.classList.add("lp-navigation__actions");
+      bar.append(actions);
+    }
     nav.append(bar);
     function closeMenu(returnFocus = false) {
       toggle.setAttribute("aria-expanded", "false");
+      toggle.setAttribute("aria-label", "Open main menu");
       list.dataset.open = "false";
       if (returnFocus) toggle.focus();
     }
     toggle.addEventListener("click", () => {
       const open = toggle.getAttribute("aria-expanded") === "true";
       toggle.setAttribute("aria-expanded", String(!open));
+      toggle.setAttribute("aria-label", open ? "Open main menu" : "Close main menu");
       list.dataset.open = String(!open);
     });
     const keyHandler = (event) => {
       if (event.key === "Escape") closeMenu(true);
     };
     nav.addEventListener("keydown", keyHandler);
-    return Object.freeze({ element: nav, closeMenu, destroy() {
-      nav.removeEventListener("keydown", keyHandler);
-      nav.remove();
-    } });
+    nav.addEventListener("click", (event) => {
+      if (event.target.closest("a")) closeMenu(false);
+    });
+    return Object.freeze({
+      element: nav,
+      closeMenu,
+      destroy() {
+        nav.removeEventListener("keydown", keyHandler);
+        nav.remove();
+      }
+    });
   }
 
   // src/ui/modal/modal.js
@@ -1678,7 +1754,61 @@ var LearningPlatformCore = (() => {
     return element;
   }
 
+  // src/ui/status-badge/status-badge.js
+  var TONE_BY_STATUS = Object.freeze({
+    available: "available",
+    active: "available",
+    planned: "planned",
+    archived: "planned",
+    "coming-soon": "planned",
+    "not-started": "planned",
+    "in-progress": "progress",
+    progress: "progress",
+    completed: "completed"
+  });
+  var LABEL_BY_STATUS = Object.freeze({
+    available: "Available",
+    active: "Available",
+    planned: "Planned",
+    archived: "Archived",
+    "coming-soon": "Planned",
+    "not-started": "Not started",
+    "in-progress": "In progress",
+    progress: "In progress",
+    completed: "Completed"
+  });
+  function statusTone(status) {
+    return TONE_BY_STATUS[status] || "planned";
+  }
+  function statusLabel(status, fallback = "") {
+    return LABEL_BY_STATUS[status] || fallback || String(status || "Planned");
+  }
+  function createStatusBadge({
+    document = globalThis.document,
+    status = "planned",
+    label,
+    marker = true
+  } = {}) {
+    const tone = statusTone(status);
+    const element = createElement(document, "span", {
+      className: `lp-status-badge lp-status-badge--${tone}`,
+      role: "status"
+    });
+    if (marker) {
+      element.append(createElement(document, "span", { "aria-hidden": "true", text: "\u25CF" }));
+      element.append(document.createTextNode(" "));
+    }
+    element.append(document.createTextNode(label || statusLabel(status)));
+    return element;
+  }
+
   // src/ui/activity-card/activity-card.js
+  function actionLabelFor(state, fallback = "Open activity") {
+    if (state === "completed") return "Review activity";
+    if (state === "in-progress") return "Resume activity";
+    if (state === "not-started") return "Start activity";
+    return fallback;
+  }
   function createActivityCard({
     document = globalThis.document,
     title,
@@ -1686,18 +1816,35 @@ var LearningPlatformCore = (() => {
     activityType = "Activity",
     duration = "",
     status = "Not started",
-    href
+    state,
+    href,
+    actionLabel,
+    badge = false,
+    badgeStatus,
+    headingLevel = 2
   } = {}) {
     const element = createElement(document, "article", { className: "lp-card lp-activity-card" });
-    element.append(
-      createElement(document, "p", { className: "lp-card__meta", text: [activityType, duration].filter(Boolean).join(" \xB7 ") }),
-      createElement(document, "h2", { text: title || "Untitled activity" })
-    );
+    if (state) element.dataset.state = state;
+    const headingTag = headingLevel === 3 ? "h3" : "h2";
+    const metaParts = [activityType, duration].filter(Boolean);
+    if (badge) {
+      element.append(createStatusBadge({
+        document,
+        status: badgeStatus || state || "planned",
+        label: typeof status === "string" && status !== "Not started" ? status : void 0
+      }));
+    }
+    if (metaParts.length) {
+      element.append(createElement(document, "p", { className: "lp-card__meta", text: metaParts.join(" \xB7 ") }));
+    }
+    element.append(createElement(document, headingTag, { text: title || "Untitled activity" }));
     if (description) element.append(createElement(document, "p", { text: description }));
-    element.append(createElement(document, "p", { className: "lp-card__meta", text: `Status: ${status}` }));
+    const readableStatus = state ? statusLabel(state, status) : status;
+    element.append(createElement(document, "p", { className: "lp-card__meta", text: `Status: ${readableStatus}` }));
     if (href) {
       const actions = createElement(document, "div", { className: "lp-card__actions" });
-      actions.append(createElement(document, "a", { className: "lp-button", href, text: "Open activity" }));
+      const label = actionLabel || actionLabelFor(state);
+      actions.append(createElement(document, "a", { className: "lp-button", href, text: label }));
       element.append(actions);
     }
     return element;
@@ -1713,6 +1860,381 @@ var LearningPlatformCore = (() => {
     if (action?.label && action?.href) {
       element.append(createElement(document, "a", { className: "lp-button", href: action.href, text: action.label }));
     }
+    return element;
+  }
+
+  // src/ui/breadcrumbs/breadcrumbs.js
+  function createBreadcrumbs({
+    document = globalThis.document,
+    items = [],
+    resolveHref
+  } = {}) {
+    const nav = createElement(document, "nav", {
+      className: "lp-breadcrumbs",
+      "aria-label": "Breadcrumb"
+    });
+    if (!items.length) {
+      nav.hidden = true;
+      return nav;
+    }
+    const list = createElement(document, "ol", { className: "lp-breadcrumbs__list" });
+    items.forEach((item2, index) => {
+      const last = index === items.length - 1;
+      const li = createElement(document, "li");
+      const href = item2.href || (item2.path != null && item2.path !== "" && resolveHref ? resolveHref(item2.path) : item2.path);
+      if (last || !href) {
+        li.append(createElement(document, "span", { text: item2.label || "", "aria-current": "page" }));
+      } else {
+        li.append(createElement(document, "a", { href, text: item2.label || "" }));
+      }
+      list.append(li);
+    });
+    nav.append(list);
+    return nav;
+  }
+
+  // src/ui/hub-shell/hub-shell.js
+  function createHubShell({
+    document = globalThis.document,
+    config,
+    currentId = "home",
+    currentIds = [],
+    themeService = null,
+    brandTitle,
+    brandTagline,
+    actions = null,
+    breadcrumbs,
+    pageHeader,
+    footer,
+    skipLabel = "Skip to main content",
+    mainId = "main-content",
+    learnerHeader,
+    learnerContext,
+    authService
+  } = {}) {
+    const shell = createElement(document, "div", { className: "lp-shell" });
+    const skip = createElement(document, "a", {
+      className: "lp-skip-link",
+      href: `#${mainId}`,
+      text: skipLabel
+    });
+    const banner = createElement(document, "header", {
+      className: "lp-shell__banner",
+      role: "banner"
+    });
+    const navigation = createNavigationShell({
+      document,
+      config,
+      currentId,
+      currentIds,
+      themeService,
+      brandTitle,
+      brandTagline,
+      actions
+    });
+    banner.append(navigation.element);
+    const headerController = learnerHeader || (learnerContext && authService ? createLearnerHeader({ document, learnerContext, authService, config }) : null);
+    const learnerMount = createElement(document, "div", { className: "lp-shell__learner" });
+    if (headerController?.element) learnerMount.append(headerController.element);
+    const crumbNode = breadcrumbs?.element || (Array.isArray(breadcrumbs?.items) ? createBreadcrumbs({ document, items: breadcrumbs.items, resolveHref: breadcrumbs.resolveHref }) : breadcrumbs) || null;
+    let intro = null;
+    if (pageHeader?.title) {
+      intro = createElement(document, "header", { className: "lp-page-header" });
+      intro.append(createElement(document, "h1", { text: pageHeader.title }));
+      if (pageHeader.subtitle) {
+        intro.append(createElement(document, "p", { className: "lp-page-header__subtitle", text: pageHeader.subtitle }));
+      }
+    }
+    const main = createElement(document, "main", {
+      className: "lp-shell__main",
+      id: mainId,
+      tabIndex: -1
+    });
+    const footerEl = createElement(document, "footer", {
+      className: "lp-shell__footer",
+      role: "contentinfo"
+    });
+    if (footer?.element) footerEl.append(footer.element);
+    else if (Array.isArray(footer?.lines)) {
+      footer.lines.forEach((line) => footerEl.append(createElement(document, "p", { text: line })));
+    }
+    shell.append(skip, banner, learnerMount);
+    if (crumbNode) shell.append(crumbNode);
+    if (intro) shell.append(intro);
+    shell.append(main, footerEl);
+    return Object.freeze({
+      element: shell,
+      main,
+      footer: footerEl,
+      navigation,
+      destroy() {
+        navigation.destroy();
+        headerController?.destroy?.();
+        shell.remove();
+      }
+    });
+  }
+
+  // src/ui/callout/callout.js
+  var TONES = Object.freeze(["info", "success", "warning", "error"]);
+  function createCallout({
+    document = globalThis.document,
+    tone = "info",
+    title,
+    message
+  } = {}) {
+    const resolved = TONES.includes(tone) ? tone : "info";
+    const element = createElement(document, "aside", {
+      className: `lp-callout lp-callout--${resolved}`,
+      role: resolved === "error" ? "alert" : null
+    });
+    if (title) element.append(createElement(document, "strong", { text: title }));
+    if (message) element.append(createElement(document, "p", { text: message }));
+    return element;
+  }
+
+  // src/ui/context-panel/context-panel.js
+  function createContextPanel({
+    document = globalThis.document,
+    contextType = "assignment",
+    heading = "Context",
+    items = [],
+    description = "",
+    action
+  } = {}) {
+    const type = CONTEXT_TYPES.includes(contextType) ? contextType : "assignment";
+    const headingId = `lp-context-${type}`;
+    const element = createElement(document, "section", {
+      className: `lp-context-panel lp-panel lp-context-panel--${type}`,
+      "aria-labelledby": headingId,
+      dataset: { contextType: type }
+    });
+    element.append(createElement(document, "h2", { id: headingId, text: heading }));
+    if (items.length) {
+      const list = createElement(document, "dl", { className: "lp-meta-list" });
+      items.forEach((item2) => list.append(labelledValue(document, item2.label, item2.value)));
+      element.append(list);
+    }
+    if (description) element.append(createElement(document, "p", { text: description }));
+    if (action?.label && action?.href) {
+      const paragraph = createElement(document, "p");
+      paragraph.append(createElement(document, "a", {
+        className: "lp-text-link",
+        href: action.href,
+        text: action.label
+      }));
+      element.append(paragraph);
+    }
+    return element;
+  }
+
+  // src/ui/learning-outcome-badge/learning-outcome-badge.js
+  function createLearningOutcomeBadge({
+    document = globalThis.document,
+    id,
+    title
+  } = {}) {
+    const label = [id, title].filter(Boolean).join(" ");
+    return createElement(document, "span", {
+      className: "lp-outcome-badge",
+      text: label || "Learning outcome"
+    });
+  }
+
+  // src/ui/week-header/week-header.js
+  function createWeekHeader({
+    document = globalThis.document,
+    teachingWeek,
+    title = "",
+    subtitle = "",
+    status,
+    learningOutcomes = [],
+    headingLevel = 1,
+    showTitle = true
+  } = {}) {
+    const element = createElement(document, "header", { className: "lp-week-header" });
+    if (status) element.append(createStatusBadge({ document, status }));
+    if (showTitle) {
+      const headingText = teachingWeek ? `Week ${teachingWeek}${title ? `: ${title}` : ""}` : title || "Week";
+      const level = headingLevel === 2 ? "h2" : "h1";
+      element.append(createElement(document, level, { text: headingText }));
+    } else if (teachingWeek) {
+      element.append(createElement(document, "p", {
+        className: "lp-week-header__kicker",
+        text: `Teaching week ${teachingWeek}`
+      }));
+    }
+    if (subtitle) {
+      element.append(createElement(document, "p", { className: "lp-week-header__subtitle", text: subtitle }));
+    }
+    if (learningOutcomes.length) {
+      const list = createElement(document, "ul", { className: "lp-week-header__outcomes" });
+      learningOutcomes.forEach((outcome) => {
+        const item2 = createElement(document, "li");
+        item2.append(createLearningOutcomeBadge({
+          document,
+          id: outcome.id,
+          title: outcome.title
+        }));
+        list.append(item2);
+      });
+      element.append(list);
+    }
+    return element;
+  }
+
+  // src/ui/week-navigation/week-navigation.js
+  function createWeekNavigation({
+    document = globalThis.document,
+    previousWeek,
+    nextWeek
+  } = {}) {
+    if (!previousWeek?.href && !nextWeek?.href) return null;
+    const nav = createElement(document, "nav", {
+      className: "lp-week-nav",
+      "aria-label": "Week"
+    });
+    const list = createElement(document, "ul", { className: "lp-week-nav__list" });
+    if (previousWeek?.href) {
+      list.append(createElement(document, "li", {}, [
+        createElement(document, "a", {
+          className: "lp-text-link",
+          href: previousWeek.href,
+          text: previousWeek.label || "Previous week",
+          rel: "prev"
+        })
+      ]));
+    }
+    if (nextWeek?.href) {
+      list.append(createElement(document, "li", {}, [
+        createElement(document, "a", {
+          className: "lp-text-link",
+          href: nextWeek.href,
+          text: nextWeek.label || "Next week",
+          rel: "next"
+        })
+      ]));
+    }
+    nav.append(list);
+    return nav;
+  }
+
+  // src/ui/session-section/session-section.js
+  function createSessionSection({
+    document = globalThis.document,
+    id,
+    title,
+    kind = "session",
+    summary = "",
+    defaultOpen = false,
+    meta,
+    children = []
+  } = {}) {
+    const resolvedKind = SESSION_KINDS.includes(kind) ? kind : "session";
+    const details = createElement(document, "details", {
+      className: "lp-session lp-panel",
+      id,
+      dataset: { kind: resolvedKind }
+    });
+    details.open = Boolean(defaultOpen);
+    const kindLabel = SESSION_KIND_LABELS[resolvedKind];
+    const summaryEl = createElement(document, "summary", { className: "lp-session__summary" });
+    const text = createElement(document, "span", { className: "lp-session__text" });
+    text.append(
+      createElement(document, "h2", { className: "lp-session__heading", text: title || kindLabel }),
+      createElement(document, "span", { className: "lp-session__meta", text: meta || kindLabel })
+    );
+    summaryEl.append(text);
+    const content = createElement(document, "div", { className: "lp-session__content" });
+    if (summary) content.append(createElement(document, "p", { className: "lp-panel-note", text: summary }));
+    const list = createElement(document, "div", { className: "lp-activity-list" });
+    (Array.isArray(children) ? children : [children]).filter(Boolean).forEach((child) => list.append(child));
+    content.append(list);
+    details.append(summaryEl, content);
+    return details;
+  }
+
+  // src/ui/week-view/week-view.js
+  function activityNode(document, activity, renderActivity) {
+    if (activity?.element) return activity.element;
+    if (typeof renderActivity === "function") return renderActivity(activity);
+    return createActivityCard({ document, ...activity });
+  }
+  function sessionMeta(session) {
+    if (session.meta) return session.meta;
+    const count = (session.activities || []).length;
+    const countLabel = `${count} ${count === 1 ? "activity" : "activities"}`;
+    const kindLabel = SESSION_KIND_LABELS[session.kind] || SESSION_KIND_LABELS.session;
+    return session.kind && session.kind !== "session" ? `${kindLabel} \xB7 ${countLabel}` : countLabel;
+  }
+  function createWeekView({
+    document = globalThis.document,
+    week = {},
+    learningOutcomes = [],
+    context = null,
+    sessions = [],
+    progress = null,
+    previousWeek,
+    nextWeek,
+    features = {},
+    renderActivity
+  } = {}) {
+    const ui = mergeWeekUiFeatures(features);
+    const element = createElement(document, "div", {
+      className: "lp-week",
+      dataset: { week: week.id || "" }
+    });
+    element.append(createWeekHeader({
+      document,
+      teachingWeek: week.teachingWeek,
+      title: week.title,
+      subtitle: week.subtitle,
+      status: week.status,
+      learningOutcomes: ui.showLearningOutcomes ? learningOutcomes : [],
+      headingLevel: week.headingLevel || 1,
+      showTitle: ui.showTitle !== false
+    }));
+    if (context && shouldShowContext(ui, context.type || context.contextType)) {
+      element.append(createContextPanel({
+        document,
+        contextType: context.type || context.contextType,
+        heading: context.heading,
+        items: context.items || [],
+        description: context.description,
+        action: context.action
+      }));
+    }
+    const visibleSessions = sessions.filter((session) => {
+      if (ui.showIndependentStudy === false && isIndependentKind(session.kind)) return false;
+      return true;
+    });
+    if (!visibleSessions.length) {
+      element.append(createEmptyState({
+        document,
+        heading: "Planned teaching week",
+        message: week.emptyMessage || "Detailed session activities for this week have not been added yet.",
+        action: week.emptyAction
+      }));
+    } else {
+      visibleSessions.forEach((session) => {
+        const children = (session.activities || []).map((activity) => activityNode(document, activity, renderActivity));
+        element.append(createSessionSection({
+          document,
+          id: session.id,
+          title: session.title,
+          kind: session.kind,
+          summary: session.summary,
+          defaultOpen: session.defaultOpen,
+          meta: sessionMeta(session),
+          children
+        }));
+      });
+    }
+    if (ui.showProgress && progress) {
+      element.append(createProgressCard({ document, ...progress }));
+    }
+    const navigation = createWeekNavigation({ document, previousWeek, nextWeek });
+    if (navigation) element.append(navigation);
     return element;
   }
 

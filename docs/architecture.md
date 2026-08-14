@@ -2,7 +2,7 @@
 
 ## Responsibility boundary
 
-The core package owns reusable platform behaviour. A hub owns learning content and presentation choices that are genuinely subject-specific.
+The core package owns reusable platform behaviour and shared learner UI grammar. A hub owns learning content and presentation choices that are genuinely subject-specific.
 
 | Shared platform core | Individual hub |
 | --- | --- |
@@ -12,7 +12,7 @@ The core package owns reusable platform behaviour. A hub owns learning content a
 | Approved API client | Specialist renderers where justified |
 | Submission and evidence envelope | Subject branding token values |
 | Backend-derived progress | Subject guidance and pedagogy |
-| Errors, loading, notifications and navigation | Route availability and subject additions |
+| Errors, loading, notifications, navigation and week/session/activity chrome | Route availability, branding values and curriculum copy |
 | Theme behaviour and semantic tokens | Hub manifest and curriculum metadata |
 
 The package contains no backend migrations. It expects the shared Supabase backend to expose the approved browser-facing `api` schema.
@@ -38,8 +38,8 @@ Pending onboarding is the sole profile-like temporary state owned by the package
 ```text
 createPlatform()
 ├── config and feature flags
-├── Supabase client (injected SDK/client)
-├── learner-safe API (`api` schema)
+├── internal Supabase client (not returned)
+├── internal learner-safe API adapter (`api` schema)
 ├── auth and session
 ├── profile and enrolment
 ├── learner context
@@ -52,7 +52,7 @@ createPlatform()
 └── theme
 ```
 
-Each service is also exported as a factory for isolated testing or gradual migration. `createPlatform()` is the convenience composition root.
+`createPlatform()` is the stable composition root. Low-level service factories are isolated in the non-stable `@learning-platform/core/advanced` entry for testing and exceptional integrations; they are not exported by the package root or browser global.
 
 ## State model
 
@@ -76,7 +76,7 @@ error
 
 ## API architecture
 
-`createLearnerApi()` fixes the schema to `api` and exposes named operations instead of a generic table selector:
+The internal learner API adapter fixes the schema to `api` and exposes named operations instead of a generic table selector:
 
 - `getProfile()`
 - `getEnrolments()`
@@ -91,9 +91,13 @@ error
 
 This reduces accidental access to private implementation schemas and keeps the frontend contract auditable.
 
+The stable platform object exposes the named service facades built on this adapter. It does not return the underlying Supabase client, API adapter or logger, so normal hub code cannot bypass the approved operations through the core.
+
 ## UI architecture
 
-Shared components use native DOM APIs and return small controllers with an `element` property. They require no framework and do not use subject data. Text is assigned with `textContent`, reducing injection risk.
+Shared components use native DOM APIs and return elements or small controllers with an `element` property. They require no framework and do not use subject data. Text is assigned with `textContent`, reducing injection risk.
+
+Week, session and activity factories consume a presentation contract (title, kind, status, href, optional activity node). They do not load curriculum packages or render activity blocks. See [Shared hub UI](hub-ui.md).
 
 Components share semantic HTML, accessible names, keyboard and Escape behaviour, visible focus tokens, minimum touch target sizing, responsive layouts, reduced-motion handling and light/dark semantic tokens with hub branding overrides.
 
@@ -105,10 +109,11 @@ The same ES module source produces:
 
 - a bundled ES module for module scripts and future package managers;
 - an IIFE build for current static sites;
+- a non-stable advanced ES module for exceptional low-level integrations;
 - a separate conformance entry;
 - standalone CSS token and component files.
 
-Supabase JS is external and injected. This avoids forcing a hub's dependency-loading strategy while allowing a package consumer to import an exact compatible SDK version.
+Supabase JS is external and injected. Version 0.1.0 is tested against and requires exactly 2.112.3, avoiding unreviewed SDK drift while preserving static and bundled loading strategies.
 
 ## Deliberate differences from the source hubs
 

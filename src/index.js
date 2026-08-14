@@ -1,21 +1,17 @@
 export { createPlatform } from "./platform.js";
-export { createPlatformConfig, STANDARD_NAVIGATION } from "./core/config/platform-config.js";
-export { createSupabaseClient } from "./core/api/supabase-client.js";
-export { createLearnerApi } from "./core/api/learner-api.js";
-export { createAuthService } from "./core/auth/auth-service.js";
-export { createSessionService } from "./core/session/session-service.js";
-export { createLearnerContext } from "./core/learner/learner-context.js";
-export { createOnboardingService } from "./core/onboarding/onboarding-service.js";
-export { createProfileService } from "./core/profile/profile-service.js";
-export { createEnrolmentService } from "./core/enrolment/enrolment-service.js";
-export { createAssignmentService } from "./core/assignment/assignment-service.js";
-export { createProgressService } from "./core/progress/progress-service.js";
-export { createSubmissionService, assertSecureSubmission } from "./core/submission/submission-service.js";
-export { evidence, EVIDENCE_TYPES, toApiResponse } from "./core/evidence/evidence.js";
-export { createPlatformState, derivePlatformState, PLATFORM_STATES } from "./core/state/platform-state.js";
-export { PlatformError, mapPlatformError, ERROR_CATEGORIES } from "./core/errors/platform-error.js";
-export { createLogger, redact } from "./core/logging/logger.js";
-export { createFeatureFlags } from "./core/feature-flags/feature-flags.js";
+export { STANDARD_NAVIGATION, NAVIGATION_MODES } from "./core/config/platform-config.js";
+export {
+  CONTEXT_TYPES,
+  SESSION_KINDS,
+  SESSION_KIND_LABELS,
+  LEARNER_ACTIVITY_STATES,
+  STATUS_TONES,
+  WEEK_UI_FEATURES,
+  mergeWeekUiFeatures
+} from "./ui/contracts.js";
+export { evidence, EVIDENCE_TYPES } from "./core/evidence/evidence.js";
+export { PLATFORM_STATES } from "./core/state/platform-state.js";
+export { PlatformError, ERROR_CATEGORIES } from "./core/errors/platform-error.js";
 export { createThemeService, applyBranding, THEME_MODES, THEME_EVENT } from "./theme/theme.js";
 export { createLearnerHeader } from "./ui/learner-header/learner-header.js";
 export { createNavigationShell } from "./ui/navigation/navigation-shell.js";
@@ -28,4 +24,14 @@ export { createErrorBanner } from "./ui/errors/error-banner.js";
 export { createProgressCard } from "./ui/progress-card/progress-card.js";
 export { createActivityCard } from "./ui/activity-card/activity-card.js";
 export { createEmptyState } from "./ui/empty-state/empty-state.js";
+export { createHubShell } from "./ui/hub-shell/hub-shell.js";
+export { createBreadcrumbs } from "./ui/breadcrumbs/breadcrumbs.js";
+export { createStatusBadge } from "./ui/status-badge/status-badge.js";
+export { createCallout } from "./ui/callout/callout.js";
+export { createContextPanel } from "./ui/context-panel/context-panel.js";
+export { createLearningOutcomeBadge } from "./ui/learning-outcome-badge/learning-outcome-badge.js";
+export { createWeekHeader } from "./ui/week-header/week-header.js";
+export { createWeekNavigation } from "./ui/week-navigation/week-navigation.js";
+export { createSessionSection } from "./ui/session-section/session-section.js";
+export { createWeekView } from "./ui/week-view/week-view.js";
 export { runConformanceChecks, assertConformant } from "./conformance/index.js";

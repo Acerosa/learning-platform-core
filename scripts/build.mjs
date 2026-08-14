@@ -31,6 +31,12 @@ await Promise.all([
     outfile: "dist/conformance.esm.js",
     format: "esm"
   }),
+  build({
+    ...shared,
+    entryPoints: ["src/advanced.js"],
+    outfile: "dist/advanced.esm.js",
+    format: "esm"
+  }),
   copyFile("src/theme/tokens.css", "dist/tokens.css"),
   copyFile("src/theme/theme.css", "dist/theme.css")
 ]);

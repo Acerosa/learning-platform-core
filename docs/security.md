@@ -16,7 +16,7 @@ The backend must continue to enforce authentication, Row-Level Security, ownersh
 
 ## Data access
 
-`createLearnerApi()` accepts only the `api` schema and exposes fixed view/RPC names. The core does not provide a generic private-table query method.
+The internal learner API adapter accepts only the `api` schema and exposes fixed view/RPC names. Stable hub code receives named service facades, not the adapter or raw Supabase client. The core does not provide a generic private-table query method.
 
 Backend permissions remain mandatory even when a view or RPC is named by the core.
 
@@ -51,4 +51,5 @@ Learners receive a stable error code/category and plain message. Diagnostic cont
 - Confirm RLS remains enabled and tested.
 - Confirm source paths contain no identity query parameters.
 - Run dependency audit and update exact runtime pins deliberately.
+- Keep Supabase JS at the reviewed 2.112.3 version until a deliberate compatibility update passes the full contract suite.
 - Review CSP, HTTPS, dependency integrity and deployment headers in each consuming hub.

@@ -1,6 +1,6 @@
 {
   "name": "@learning-platform/core",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Framework-free shared frontend services and UI for Learning Platform learner hubs.",
   "type": "module",
   "main": "./dist/learning-platform-core.esm.js",
@@ -8,6 +8,7 @@
   "browser": "./dist/learning-platform-core.iife.js",
   "exports": {
     ".": "./dist/learning-platform-core.esm.js",
+    "./advanced": "./dist/advanced.esm.js",
     "./conformance": "./dist/conformance.esm.js",
     "./theme.css": "./dist/theme.css",
     "./tokens.css": "./dist/tokens.css",
@@ -15,7 +16,6 @@
   },
   "files": [
     "dist",
-    "src",
     "docs",
     "README.md",
     "CHANGELOG.md",
@@ -23,9 +23,11 @@
   ],
   "scripts": {
     "build": "node scripts/build.mjs",
+    "syntax": "node scripts/check-syntax.mjs",
     "test": "node --test",
-    "test:conformance": "node --test tests/conformance",
-    "check": "npm run build && npm test"
+    "test:conformance": "node --test tests/conformance/conformance.test.js",
+    "test:contracts": "node --test tests/contracts/public-api.test.js",
+    "check": "npm run syntax && npm run build && npm test"
   },
   "keywords": [
     "learning-platform",
@@ -38,7 +40,7 @@
     "node": ">=20"
   },
   "peerDependencies": {
-    "@supabase/supabase-js": "^2.0.0"
+    "@supabase/supabase-js": "2.112.3"
   },
   "peerDependenciesMeta": {
     "@supabase/supabase-js": {
@@ -46,6 +48,7 @@
     }
   },
   "devDependencies": {
+    "@supabase/supabase-js": "2.112.3",
     "axe-core": "^4.10.3",
     "esbuild": "^0.25.9",
     "jsdom": "^26.1.0"
