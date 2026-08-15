@@ -2,6 +2,13 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## [Unreleased]
+
+### Added
+
+- Advanced learner API helpers for `published_curriculum` metadata and
+  `published_curriculum_package` teaching-package reads.
+
 ## 0.2.0 - 2026-08-14
 
 ### Added
