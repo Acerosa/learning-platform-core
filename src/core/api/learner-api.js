@@ -62,6 +62,11 @@ export function createLearnerApi({ client, schema = "api", logger } = {}) {
     }),
     getRegistrationOptions: () => rpc("registration_options"),
     completeOnboarding: (payload) => rpc("complete_learner_onboarding", payload),
-    submitAttempt: (payload) => rpc("submit_attempt", payload)
+    submitAttempt: (payload) => rpc("submit_attempt", payload),
+    getPublishedCurriculum: () => rpc("published_curriculum"),
+    getPublishedCurriculumPackage: (hubCode, courseKey) => rpc("published_curriculum_package", {
+      p_hub_code: hubCode,
+      p_course_key: courseKey
+    })
   });
 }
