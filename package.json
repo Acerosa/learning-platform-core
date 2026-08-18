@@ -8,6 +8,7 @@
   "browser": "./dist/learning-platform-core.iife.js",
   "exports": {
     ".": "./dist/learning-platform-core.esm.js",
+    "./curriculum-runtime": "./dist/curriculum-runtime.esm.js",
     "./advanced": "./dist/advanced.esm.js",
     "./conformance": "./dist/conformance.esm.js",
     "./theme.css": "./dist/theme.css",

@@ -1,5 +1,9 @@
 # Architecture
 
+The platform-wide pattern is **Contract-First Modular Hub Architecture**,
+documented in `learning-platform-backend` `docs/architecture.md`. This package
+is shared learner platform behaviour (framework-neutral).
+
 ## Responsibility boundary
 
 The core package owns reusable platform behaviour and shared learner UI grammar. A hub owns learning content and presentation choices that are genuinely subject-specific.
@@ -16,6 +20,8 @@ The core package owns reusable platform behaviour and shared learner UI grammar.
 | Theme behaviour and semantic tokens | Hub manifest and curriculum metadata |
 
 The package contains no backend migrations. It expects the shared Supabase backend to expose the approved browser-facing `api` schema.
+
+Core must not own curriculum schemas, hub-specific workflows, React presentation, Admin behaviour or protected database access. React learner chrome lives in `@learning-platform/ui`. Canonical `lp.content.*` lives in `@learning-platform/content`. Platform-wide architecture is documented in `learning-platform-backend` `docs/architecture.md`.
 
 ## Trust boundary
 
@@ -45,6 +51,7 @@ createPlatform()
 ├── learner context
 ├── onboarding
 ├── assignment and curriculum delivery
+├── published curriculum runtime (`platform.curriculum`)
 ├── progress, attempts and responses
 ├── submission and evidence
 ├── platform state
@@ -88,8 +95,12 @@ The internal learner API adapter fixes the schema to `api` and exposes named ope
 - `getRegistrationOptions()`
 - `completeOnboarding(payload)`
 - `submitAttempt(payload)`
+- `getPublishedCurriculum()`
+- `getPublishedCurriculumPackage(hubCode, courseKey, packageVersion?)`
 
 This reduces accidental access to private implementation schemas and keeps the frontend contract auditable.
+
+See [Curriculum runtime](curriculum-runtime.md) for `PublishedCurriculumService`, cache keys and hub versus platform responsibilities.
 
 The stable platform object exposes the named service facades built on this adapter. It does not return the underlying Supabase client, API adapter or logger, so normal hub code cannot bypass the approved operations through the core.
 
@@ -113,7 +124,7 @@ The same ES module source produces:
 - a separate conformance entry;
 - standalone CSS token and component files.
 
-Supabase JS is external and injected. Version 0.1.0 is tested against and requires exactly 2.112.3, avoiding unreviewed SDK drift while preserving static and bundled loading strategies.
+Supabase JS is external and injected. Package `0.2.0` is tested against and requires exactly 2.112.3, avoiding unreviewed SDK drift while preserving static and bundled loading strategies.
 
 ## Deliberate differences from the source hubs
 

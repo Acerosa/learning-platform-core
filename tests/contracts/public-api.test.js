@@ -39,9 +39,19 @@ const STABLE_EXPORTS = Object.freeze([
   "createModal",
   "createNavigationShell",
   "createOnboardingView",
+  "createCacheManager",
+  "createCurriculumValidator",
   "createPlatform",
+  "createPublicationResolver",
+  "createPublishedCurriculumService",
+  "createRuntimeSchemaLoader",
+  "CURRICULUM_CACHE_PREFIX",
+  "curriculumCacheKey",
+  "PUBLICATION_STATES",
   "createProgressCard",
   "createSessionSection",
+  "renderPublicationStatus",
+  "resolvePublicationState",
   "createStatusBadge",
   "createThemeService",
   "createToastRegion",
@@ -60,6 +70,7 @@ const ADVANCED_EXPORTS = Object.freeze([
   "createEnrolmentService",
   "createFeatureFlags",
   "createLearnerApi",
+  "createPublishedCurriculumService",
   "createLearnerContext",
   "createLogger",
   "createOnboardingService",
@@ -107,6 +118,7 @@ test("createPlatform returns the canonical service facade without raw client acc
     "assignments",
     "auth",
     "config",
+    "curriculum",
     "destroy",
     "enrolments",
     "features",
@@ -133,6 +145,7 @@ test("package metadata pins the tested SDK and exports no deep source paths", as
   assert.equal(packageJson.devDependencies["@supabase/supabase-js"], "2.112.3");
   assert.equal(installed.version, "2.112.3");
   assert.equal(packageJson.exports["./advanced"], "./dist/advanced.esm.js");
+  assert.equal(packageJson.exports["./curriculum-runtime"], "./dist/curriculum-runtime.esm.js");
   assert.equal(packageJson.files.includes("src"), false);
 });
 

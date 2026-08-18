@@ -6,8 +6,13 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ### Added
 
-- Advanced learner API helpers for `published_curriculum` metadata and
-  `published_curriculum_package` teaching-package reads.
+- `@learning-platform/core/curriculum-runtime` with `createPublishedCurriculumService`,
+  hub-scoped cache keys, publication version selection, schema gates and shared
+  fallback policy. `createPlatform` exposes the same service as `platform.curriculum`.
+  Optional `courseKey` on platform configuration identifies the published course.
+- Architecture notes that Core must not own React presentation, curriculum
+  schemas or Admin behaviour; platform-wide design lives in the backend
+  architecture document.
 
 ## 0.2.0 - 2026-08-14
 

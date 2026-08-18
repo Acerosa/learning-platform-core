@@ -1,4 +1,16 @@
 export { createPlatform } from "./platform.js";
+export {
+  createPublishedCurriculumService,
+  createCacheManager,
+  createCurriculumValidator,
+  createPublicationResolver,
+  createRuntimeSchemaLoader,
+  curriculumCacheKey,
+  renderPublicationStatus,
+  resolvePublicationState,
+  CURRICULUM_CACHE_PREFIX,
+  PUBLICATION_STATES
+} from "./curriculum-runtime/index.js";
 export { STANDARD_NAVIGATION, NAVIGATION_MODES } from "./core/config/platform-config.js";
 export {
   CONTEXT_TYPES,

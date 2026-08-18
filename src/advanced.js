@@ -22,3 +22,4 @@ export { createPlatformState, derivePlatformState } from "./core/state/platform-
 export { mapPlatformError } from "./core/errors/platform-error.js";
 export { createLogger, redact } from "./core/logging/logger.js";
 export { createFeatureFlags } from "./core/feature-flags/feature-flags.js";
+export { createPublishedCurriculumService } from "./curriculum-runtime/index.js";

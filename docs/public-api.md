@@ -57,6 +57,7 @@ const config = {
   hubName: "Example Hub",
   platformVersion: "0.1",
   accountPath: "./account/",
+  courseKey: "example-course",
   supabase: {
     projectUrl: "https://PROJECT.supabase.co",
     publishableKey: "PUBLIC_PUBLISHABLE_KEY"
@@ -89,6 +90,7 @@ platform.enrolments
 platform.assignments
 platform.progress
 platform.submission
+platform.curriculum
 platform.state
 platform.theme
 platform.features
@@ -102,7 +104,9 @@ Service details not expanded in later sections:
 
 - `platform.session` restores the auth state with `restore()`, returns the SDK-managed session through `getSession()`, reports a boolean through `hasActiveSession()`, delegates `signOut()`, and provides `subscribe(listener)`. It returns state snapshots, the current session, booleans or unsubscribe functions as appropriate. Use `platform.initialise()` for normal startup and keep subscriptions only for the mounted lifetime. Auth subscriptions are emitted when session state changes. Never log, copy or persist the returned session, and never treat the browser boolean as authorisation.
 - `platform.profile.getProfile()` returns the learner-scoped backend profile or `null`. Call it only after authentication when a one-off raw profile refresh is necessary; normal UI should prefer learner context. It emits no events. Returned identity is display data and must not be persisted or used as browser authority.
-- `platform.enrolments.getEnrolments()` returns learner-scoped backend enrolment rows. Call it after authentication; normal UI should prefer the normalised enrolments already present in learner context. It emits no events. IDs or membership received by the browser must not be resubmitted as authorisation.
+- `platform.curriculum` loads validated published teaching packages for the
+  configured `hubCode` and `courseKey`. See [Curriculum runtime](curriculum-runtime.md).
+  Hubs must not call publication RPCs directly.
 
 ## 5. Theme API — STABLE
 

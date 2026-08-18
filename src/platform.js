@@ -14,6 +14,7 @@ import { createLearnerContext } from "./core/learner/learner-context.js";
 import { createOnboardingService } from "./core/onboarding/onboarding-service.js";
 import { createSubmissionService } from "./core/submission/submission-service.js";
 import { createThemeService, applyBranding } from "./theme/theme.js";
+import { createPublishedCurriculumService } from "./curriculum-runtime/index.js";
 
 export function createPlatform(options = {}, dependencies = {}) {
   const config = createPlatformConfig(options);
@@ -43,6 +44,17 @@ export function createPlatform(options = {}, dependencies = {}) {
     crypto: dependencies.crypto
   });
   const features = createFeatureFlags(config.features);
+  const curriculum = createPublishedCurriculumService({
+    hubCode: config.hubCode,
+    courseKey: config.courseKey,
+    api,
+    supabase: config.supabase,
+    storage: dependencies.localStorage,
+    fetch: dependencies.fetch,
+    session: dependencies.session,
+    validatePackage: dependencies.validatePackage,
+    loadBundled: dependencies.loadBundled
+  });
   const state = createPlatformState("loading");
   const theme = dependencies.document === null ? null : createThemeService({
     document: dependencies.document || globalThis.document,
@@ -111,6 +123,7 @@ export function createPlatform(options = {}, dependencies = {}) {
     assignments,
     progress,
     submission,
+    curriculum,
     state,
     theme,
     features,

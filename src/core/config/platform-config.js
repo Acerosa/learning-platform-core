@@ -110,6 +110,7 @@ export function createPlatformConfig(options = {}) {
       primary: safeBrandColour(options.theme?.primary, "#315b7d"),
       accent: safeBrandColour(options.theme?.accent, "#4f7695")
     }),
+    courseKey: cleanString(options.courseKey),
     supabase: Object.freeze({
       projectUrl: cleanString(options.supabase?.projectUrl),
       publishableKey: cleanString(options.supabase?.publishableKey)
