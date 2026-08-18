@@ -10,31 +10,11 @@ All notable changes are documented here. This project follows Semantic Versionin
   hub-scoped cache keys, publication version selection, schema gates and shared
   fallback policy. `createPlatform` exposes the same service as `platform.curriculum`.
   Optional `courseKey` on platform configuration identifies the published course.
+- Learner API helpers for `published_curriculum` metadata and
+  `published_curriculum_package` teaching-package reads.
 - Architecture notes that Core must not own React presentation, curriculum
   schemas or Admin behaviour; platform-wide design lives in the backend
   architecture document.
-
-## 0.2.0 - 2026-08-14
-
-### Added
-
-- Shared hub learner UI primitives: hub shell, breadcrumbs, week header/navigation/view, session section, context panel, learning-outcome badge, status badge and callout.
-- Presentation contracts for week, session kinds and activity cards, driven by configuration rather than hub identity.
-- `navigationMode: "as-supplied"` so hubs can keep a custom primary navigation order without Core injecting unused standard routes.
-- Navigation brand title/tagline and an actions slot for account controls.
-- Activity card start/resume/completed actions and optional status badges.
-- Hub UI documentation and tests for variants, keyboard behaviour, responsive CSS contracts and backward-compatible navigation.
-
-### Changed
-
-- Package version is `0.2.0`. Existing `0.1.0` factories keep their names and default behaviour.
-
-### Compatibility
-
-- Additive public API. Default `navigationMode` remains `"standard"`.
-- `createActivityCard` still defaults to “Open activity” when `state` is omitted.
-- Existing Core consumers do not need to change until they adopt the new primitives.
-- Hubs that vendor Core should copy `dist/` into a `0.2.0` asset directory.
 
 ## 0.1.0 - 2026-08-11
 
