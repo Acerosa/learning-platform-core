@@ -53,6 +53,7 @@ var PlatformError = class extends Error {
 };
 
 // src/core/config/platform-config.js
+var NAVIGATION_MODES = Object.freeze(["standard", "as-supplied"]);
 var STANDARD_NAVIGATION = Object.freeze([
   Object.freeze({ id: "home", label: "Home" }),
   Object.freeze({ id: "learning", label: "Learning" }),

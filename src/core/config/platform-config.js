@@ -1,5 +1,7 @@
 import { PlatformError } from "../errors/platform-error.js";
 
+export const NAVIGATION_MODES = Object.freeze(["standard", "as-supplied"]);
+
 export const STANDARD_NAVIGATION = Object.freeze([
   Object.freeze({ id: "home", label: "Home" }),
   Object.freeze({ id: "learning", label: "Learning" }),
@@ -16,31 +18,59 @@ function cleanString(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function navigationFrom(items = []) {
+function navigationItem(item, defaults = {}) {
+  const id = cleanString(item?.id) || defaults.id;
+  const label = cleanString(item?.label) || defaults.label;
+  const path = cleanString(item?.path);
+  if (!id || !label) {
+    throw new PlatformError({ code: "INVALID_NAVIGATION_ITEM", category: "configuration" });
+  }
+  return Object.freeze({
+    id,
+    label,
+    path,
+    enabled: item.enabled !== false && Boolean(path)
+  });
+}
+
+function navigationFrom(items = [], mode = "standard") {
   if (!Array.isArray(items)) {
     throw new PlatformError({ code: "INVALID_NAVIGATION", category: "configuration" });
+  }
+  if (mode === "as-supplied") {
+    if (!items.length) {
+      throw new PlatformError({ code: "INVALID_NAVIGATION", category: "configuration" });
+    }
+    return Object.freeze(items.map((item) => {
+      const parsed = navigationItem(item);
+      if (!parsed.path) {
+        throw new PlatformError({ code: "INVALID_NAVIGATION_ITEM", category: "configuration" });
+      }
+      return parsed;
+    }));
   }
   const supplied = new Map(items.map((item) => [cleanString(item?.id), item]));
   const standard = STANDARD_NAVIGATION.map((definition) => {
     const item = supplied.get(definition.id) || {};
     supplied.delete(definition.id);
-    return Object.freeze({
-      ...definition,
-      label: cleanString(item.label) || definition.label,
-      path: cleanString(item.path),
-      enabled: item.enabled !== false && Boolean(cleanString(item.path))
-    });
+    return navigationItem({ ...definition, ...item, id: definition.id, label: cleanString(item.label) || definition.label }, definition);
   });
   const additions = Array.from(supplied.values()).map((item) => {
-    const id = cleanString(item?.id);
-    const label = cleanString(item?.label);
-    const path = cleanString(item?.path);
-    if (!id || !label || !path) {
+    const parsed = navigationItem(item);
+    if (!parsed.path) {
       throw new PlatformError({ code: "INVALID_NAVIGATION_ITEM", category: "configuration" });
     }
-    return Object.freeze({ id, label, path, enabled: item.enabled !== false });
+    return parsed;
   });
   return Object.freeze([...standard, ...additions]);
+}
+
+function navigationModeFrom(value) {
+  const mode = cleanString(value) || "standard";
+  if (!NAVIGATION_MODES.includes(mode)) {
+    throw new PlatformError({ code: "INVALID_NAVIGATION_MODE", category: "configuration" });
+  }
+  return mode;
 }
 
 function safeBrandColour(value, fallback) {
@@ -65,18 +95,22 @@ export function createPlatformConfig(options = {}) {
     throw new PlatformError({ code: "PRIVATE_SCHEMA_PROHIBITED", category: "configuration" });
   }
 
+  const navigationMode = navigationModeFrom(options.navigationMode);
+
   return Object.freeze({
     hubCode,
     hubName,
     platformVersion: cleanString(options.platformVersion) || "0.1",
     apiSchema: "api",
     accountPath: cleanString(options.accountPath) || "./account/",
-    navigation: navigationFrom(options.navigation),
+    navigationMode,
+    navigation: navigationFrom(options.navigation, navigationMode),
     features: Object.freeze({ ...(options.features || {}) }),
     theme: Object.freeze({
       primary: safeBrandColour(options.theme?.primary, "#315b7d"),
       accent: safeBrandColour(options.theme?.accent, "#4f7695")
     }),
+    courseKey: cleanString(options.courseKey),
     supabase: Object.freeze({
       projectUrl: cleanString(options.supabase?.projectUrl),
       publishableKey: cleanString(options.supabase?.publishableKey)

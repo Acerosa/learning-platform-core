@@ -32,6 +32,7 @@ test("platform composes auth, learner context, assignments, progress and submiss
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(platform.state.getState().status, "ready");
   assert.equal(platform.learner.getContext().fullName, "Ada Lovelace");
+  assert.deepEqual(await platform.assignments.getAssignments(), [{ activity_key: "activity-1" }]);
   assert.deepEqual(await platform.progress.getProgress("activity-1"), [{ activity_key: "activity-1", completed: true }]);
   const result = await platform.submission.submit({
     activityKey: "activity-1",

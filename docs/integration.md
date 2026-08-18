@@ -44,6 +44,23 @@ document.querySelector("[data-platform-navigation]").append(navigation.element);
 
 The theme selector reads and writes only the mode string. Hub colours are CSS custom properties, not learner data.
 
+To keep a custom link order (for example Home, Weeks, Assignments), pass `navigationMode: "as-supplied"`. The default remains `"standard"`.
+
+Optional brand lines and an account slot:
+
+```js
+const actions = document.createElement("div");
+actions.setAttribute("data-student-account", "");
+const navigation = LearningPlatformCore.createNavigationShell({
+  config: platform.config,
+  currentId: document.body.dataset.section || document.body.dataset.page,
+  themeService: platform.theme,
+  brandTitle: "Unit 14 Hub",
+  brandTagline: "OCR Level 3 IT",
+  actions
+});
+```
+
 ## 3. Mount the learner header
 
 ```js
@@ -88,7 +105,7 @@ An existing authenticated account without a learner profile enters `onboarding-r
 
 ```js
 const [assignments, progress] = await Promise.all([
-  platform.assignment.getAssignments(),
+  platform.assignments.getAssignments(),
   platform.progress.getProgress()
 ]);
 ```
@@ -146,11 +163,12 @@ try {
   errorHost.replaceChildren(LearningPlatformCore.createErrorBanner({
     message: error.learnerMessage
   }));
-  platform.logger.warn("activity.submit.failed", { code: error.code });
 }
 ```
 
-Never show `error.cause`, raw Supabase messages or diagnostic context to a learner.
+Never show `error.cause`, raw Supabase messages or diagnostic context to a learner. If the hub has an approved monitoring integration, report only the stable error code and non-sensitive operational context through that integration.
+
+The platform facade intentionally provides no raw SDK client or generic query adapter. Add a named operation to the approved service contract when an integration needs new backend behaviour.
 
 ## 9. Clean up
 

@@ -34,15 +34,21 @@ test("published curriculum package reads use the learner-safe RPC", async () => 
     }
   });
   const api = createLearnerApi({ client });
-  const rows = await api.getPublishedCurriculumPackage("unit-14-software-engineering-for-business", "ocr-level-3-it");
+  const rows = await api.getPublishedCurriculumPackage("example-hub", "example-course");
   assert.equal(rows[0].package_version, "0.2.0");
   assert.deepEqual(
     client.calls.filter((call) => call.type === "rpc").map((call) => call.name),
     ["published_curriculum_package"]
   );
   assert.deepEqual(client.calls.find((call) => call.type === "rpc").payload, {
-    p_hub_code: "unit-14-software-engineering-for-business",
-    p_course_key: "ocr-level-3-it"
+    p_hub_code: "example-hub",
+    p_course_key: "example-course"
+  });
+  await api.getPublishedCurriculumPackage("example-hub", "example-course", "0.2.1");
+  assert.deepEqual(client.calls.filter((call) => call.type === "rpc").at(-1).payload, {
+    p_hub_code: "example-hub",
+    p_course_key: "example-course",
+    p_package_version: "0.2.1"
   });
 });
 

@@ -22,11 +22,13 @@ Load shared tokens, map existing colours to `--hub-primary` and `--hub-accent`, 
 
 ### 3. Replace navigation and learner header
 
-Configure the six standard navigation sections, allowing unfinished routes to remain disabled. Mount the shared learner header from backend learner context. Do not copy profile fields into a hub-owned session object.
+Configure navigation. The default still supplies the six standard sections, with unfinished routes disabled. Pass `navigationMode: "as-supplied"` when the hub IA cannot accept unused standard items in the middle of the list. Mount the shared learner header from backend learner context. Do not copy profile fields into a hub-owned session object.
+
+Adopt `createHubShell` or `createNavigationShell` plus `createBreadcrumbs` for skip link, banner, mobile menu and trail. Keep hub personality in brand title, tagline and `--hub-primary` / `--hub-accent`.
 
 ### 4. Replace authentication and session restoration
 
-Inject the existing Supabase client or an exact Supabase JS `createClient` function. Enable the shared auth/session service behind a feature flag. Remove custom token REST fallbacks only after equivalent session restore, refresh, sign-out and confirmation tests pass.
+Use Supabase JS 2.112.3 and supply its `createClient` function (or load that exact browser build before the IIFE). Existing-client injection belongs to the non-stable advanced/test integration path and should not become a hub convention. Enable the shared auth/session service behind a feature flag. Remove custom token REST fallbacks only after equivalent session restore, refresh, sign-out and confirmation tests pass.
 
 ### 5. Replace registration and onboarding
 
@@ -47,6 +49,8 @@ Keep browser drafts until the corresponding backend attempt is verified. Remove 
 ### 8. Enable conformance and remove duplicates
 
 Run the shared conformance suite in hub CI, then remove local platform copies. Finish with security, accessibility, responsive, performance, documentation and deployment review.
+
+Before replacing local platform code, compare the hub only against the stable root exports and the canonical platform shape documented in [Public API](public-api.md). Treat an advanced-entry dependency as an explicit migration exception with an owner and removal plan.
 
 ## Source-hub considerations from the audits
 
@@ -70,6 +74,43 @@ Reusable strengths include light/dark/system behaviour, accessible semantic toke
 - local correctness/awarded marks as authoritative platform data;
 - subject routes, branding or programming teaching content inside the core;
 - unpinned runtime dependencies.
+
+## Future adoption of shared hub UI
+
+This is not a migration of Unit 3 or T Level. After Core 0.2.0, those hubs can adopt the shared grammar incrementally.
+
+### Unit 3 Cyber Security Hub
+
+Adopt later:
+
+- skip link, `createNavigationShell` / `createHubShell`, breadcrumbs
+- `createWeekView` mapped from week HTML/registry, with `contextType: "exam"`
+- `createSessionSection` for Session 1 / Session 2 / directed study
+- `createStatusBadge` in place of duplicated `.status-label` CSS
+
+Blockers:
+
+- Week and activity pages are largely static HTML with copied headers, not a single mount
+- Tokens are `--color-*` and are not mapped onto `--lp-*`
+- Exam pedagogy (LO chips, examination focus, NCSC, OCR command-word drills) must stay hub content passed as context items, never Core branches
+- Account chrome lives on a separate widget, not in the header
+
+### T Level Software Development Hub
+
+Adopt later:
+
+- `createHubShell` for skip link, banner, theme and account slot
+- `createBreadcrumbs` (today `.breadcrumb` singular)
+- `createActivityCard` / `createStatusBadge` for foundations catalogue cards
+
+Blockers:
+
+- IA is phase/foundations/task, not week/session
+- Dual navigation (header quick links plus sticky course sidebar) has no Core sidebar primitive
+- Landmark completeness (`role="banner"` / `contentinfo`) would change injected markup
+- Programming editor chrome stays hub/content-owned
+
+Do not force week presentation onto T Level. Use cards, shell and badges first.
 
 ## Rollback
 

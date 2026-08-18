@@ -1,0 +1,40 @@
+name: Quality
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Build and test
+        run: npm run check
+
+      - name: Run conformance suite explicitly
+        run: npm run test:conformance
+
+      - name: Audit dependencies
+        run: npm audit --audit-level=high
+
+      - name: Verify package contents
+        run: npm pack --dry-run

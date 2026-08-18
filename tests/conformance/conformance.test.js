@@ -64,6 +64,14 @@ test("shared styles include responsive, focus, reduced-motion and theme requirem
 });
 
 test("shared source remains subject-neutral", async () => {
-  const entry = await readFile(new URL("../../src/index.js", import.meta.url), "utf8");
-  assert.doesNotMatch(entry, /Cyber Security|Software Development|TryHackMe|NCSC|OCR/);
+  const files = [
+    new URL("../../src/index.js", import.meta.url),
+    new URL("../../src/platform.js", import.meta.url),
+    new URL("../../src/curriculum-runtime/index.js", import.meta.url),
+    new URL("../../src/curriculum-runtime/published-curriculum-service.js", import.meta.url)
+  ];
+  for (const file of files) {
+    const entry = await readFile(file, "utf8");
+    assert.doesNotMatch(entry, /Cyber Security|Software Development|TryHackMe|NCSC|OCR|unit-14|unit-3-cyber/i);
+  }
 });

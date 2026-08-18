@@ -14,6 +14,7 @@ import { createLearnerContext } from "./core/learner/learner-context.js";
 import { createOnboardingService } from "./core/onboarding/onboarding-service.js";
 import { createSubmissionService } from "./core/submission/submission-service.js";
 import { createThemeService, applyBranding } from "./theme/theme.js";
+import { createPublishedCurriculumService } from "./curriculum-runtime/index.js";
 
 export function createPlatform(options = {}, dependencies = {}) {
   const config = createPlatformConfig(options);
@@ -26,10 +27,10 @@ export function createPlatform(options = {}, dependencies = {}) {
   const auth = createAuthService({ client, logger });
   const session = createSessionService(auth);
   const profile = createProfileService(api);
-  const enrolment = createEnrolmentService(api);
-  const assignment = createAssignmentService(api);
+  const enrolments = createEnrolmentService(api);
+  const assignments = createAssignmentService(api);
   const progress = createProgressService(api);
-  const learner = createLearnerContext({ authService: auth, profileService: profile, enrolmentService: enrolment });
+  const learner = createLearnerContext({ authService: auth, profileService: profile, enrolmentService: enrolments });
   const onboarding = createOnboardingService({
     api,
     authService: auth,
@@ -42,7 +43,18 @@ export function createPlatform(options = {}, dependencies = {}) {
     storage: dependencies.sessionStorage,
     crypto: dependencies.crypto
   });
-  const flags = createFeatureFlags(config.features);
+  const features = createFeatureFlags(config.features);
+  const curriculum = createPublishedCurriculumService({
+    hubCode: config.hubCode,
+    courseKey: config.courseKey,
+    api,
+    supabase: config.supabase,
+    storage: dependencies.localStorage,
+    fetch: dependencies.fetch,
+    session: dependencies.session,
+    validatePackage: dependencies.validatePackage,
+    loadBundled: dependencies.loadBundled
+  });
   const state = createPlatformState("loading");
   const theme = dependencies.document === null ? null : createThemeService({
     document: dependencies.document || globalThis.document,
@@ -72,8 +84,8 @@ export function createPlatform(options = {}, dependencies = {}) {
       return;
     }
     try {
-      const assignments = await assignment.getAssignments();
-      state.transition(Array.isArray(assignments) && assignments.length ? "ready" : "no-assignments");
+      const assignmentRows = await assignments.getAssignments();
+      state.transition(Array.isArray(assignmentRows) && assignmentRows.length ? "ready" : "no-assignments");
     } catch (error) {
       state.transition("error", error);
     }
@@ -102,21 +114,19 @@ export function createPlatform(options = {}, dependencies = {}) {
 
   return Object.freeze({
     config,
-    client,
-    api,
     auth,
     session,
     learner,
     onboarding,
     profile,
-    enrolment,
-    assignment,
+    enrolments,
+    assignments,
     progress,
     submission,
+    curriculum,
     state,
     theme,
-    flags,
-    logger,
+    features,
     initialise,
     destroy
   });

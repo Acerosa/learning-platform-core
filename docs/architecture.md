@@ -1,8 +1,12 @@
 # Architecture
 
+The platform-wide pattern is **Contract-First Modular Hub Architecture**,
+documented in `learning-platform-backend` `docs/architecture.md`. This package
+is shared learner platform behaviour (framework-neutral).
+
 ## Responsibility boundary
 
-The core package owns reusable platform behaviour. A hub owns learning content and presentation choices that are genuinely subject-specific.
+The core package owns reusable platform behaviour and shared learner UI grammar. A hub owns learning content and presentation choices that are genuinely subject-specific.
 
 | Shared platform core | Individual hub |
 | --- | --- |
@@ -12,10 +16,12 @@ The core package owns reusable platform behaviour. A hub owns learning content a
 | Approved API client | Specialist renderers where justified |
 | Submission and evidence envelope | Subject branding token values |
 | Backend-derived progress | Subject guidance and pedagogy |
-| Errors, loading, notifications and navigation | Route availability and subject additions |
+| Errors, loading, notifications, navigation and week/session/activity chrome | Route availability, branding values and curriculum copy |
 | Theme behaviour and semantic tokens | Hub manifest and curriculum metadata |
 
 The package contains no backend migrations. It expects the shared Supabase backend to expose the approved browser-facing `api` schema.
+
+Core must not own curriculum schemas, hub-specific workflows, React presentation, Admin behaviour or protected database access. React learner chrome lives in `@learning-platform/ui`. Canonical `lp.content.*` lives in `@learning-platform/content`. Platform-wide architecture is documented in `learning-platform-backend` `docs/architecture.md`.
 
 ## Trust boundary
 
@@ -38,13 +44,14 @@ Pending onboarding is the sole profile-like temporary state owned by the package
 ```text
 createPlatform()
 ├── config and feature flags
-├── Supabase client (injected SDK/client)
-├── learner-safe API (`api` schema)
+├── internal Supabase client (not returned)
+├── internal learner-safe API adapter (`api` schema)
 ├── auth and session
 ├── profile and enrolment
 ├── learner context
 ├── onboarding
 ├── assignment and curriculum delivery
+├── published curriculum runtime (`platform.curriculum`)
 ├── progress, attempts and responses
 ├── submission and evidence
 ├── platform state
@@ -52,7 +59,7 @@ createPlatform()
 └── theme
 ```
 
-Each service is also exported as a factory for isolated testing or gradual migration. `createPlatform()` is the convenience composition root.
+`createPlatform()` is the stable composition root. Low-level service factories are isolated in the non-stable `@learning-platform/core/advanced` entry for testing and exceptional integrations; they are not exported by the package root or browser global.
 
 ## State model
 
@@ -76,7 +83,7 @@ error
 
 ## API architecture
 
-`createLearnerApi()` fixes the schema to `api` and exposes named operations instead of a generic table selector:
+The internal learner API adapter fixes the schema to `api` and exposes named operations instead of a generic table selector:
 
 - `getProfile()`
 - `getEnrolments()`
@@ -88,12 +95,20 @@ error
 - `getRegistrationOptions()`
 - `completeOnboarding(payload)`
 - `submitAttempt(payload)`
+- `getPublishedCurriculum()`
+- `getPublishedCurriculumPackage(hubCode, courseKey, packageVersion?)`
 
 This reduces accidental access to private implementation schemas and keeps the frontend contract auditable.
 
+See [Curriculum runtime](curriculum-runtime.md) for `PublishedCurriculumService`, cache keys and hub versus platform responsibilities.
+
+The stable platform object exposes the named service facades built on this adapter. It does not return the underlying Supabase client, API adapter or logger, so normal hub code cannot bypass the approved operations through the core.
+
 ## UI architecture
 
-Shared components use native DOM APIs and return small controllers with an `element` property. They require no framework and do not use subject data. Text is assigned with `textContent`, reducing injection risk.
+Shared components use native DOM APIs and return elements or small controllers with an `element` property. They require no framework and do not use subject data. Text is assigned with `textContent`, reducing injection risk.
+
+Week, session and activity factories consume a presentation contract (title, kind, status, href, optional activity node). They do not load curriculum packages or render activity blocks. See [Shared hub UI](hub-ui.md).
 
 Components share semantic HTML, accessible names, keyboard and Escape behaviour, visible focus tokens, minimum touch target sizing, responsive layouts, reduced-motion handling and light/dark semantic tokens with hub branding overrides.
 
@@ -105,10 +120,11 @@ The same ES module source produces:
 
 - a bundled ES module for module scripts and future package managers;
 - an IIFE build for current static sites;
+- a non-stable advanced ES module for exceptional low-level integrations;
 - a separate conformance entry;
 - standalone CSS token and component files.
 
-Supabase JS is external and injected. This avoids forcing a hub's dependency-loading strategy while allowing a package consumer to import an exact compatible SDK version.
+Supabase JS is external and injected. Package `0.2.0` is tested against and requires exactly 2.112.3, avoiding unreviewed SDK drift while preserving static and bundled loading strategies.
 
 ## Deliberate differences from the source hubs
 
