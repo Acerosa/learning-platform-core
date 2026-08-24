@@ -706,7 +706,6 @@ var LearningPlatformCore = (() => {
     const password = typeof details.password === "string" ? details.password : "";
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return { ok: false, code: "INVALID_EMAIL" };
     if (password.length < 8) return { ok: false, code: "WEAK_PASSWORD" };
-    if (password !== details.confirmPassword) return { ok: false, code: "PASSWORD_MISMATCH" };
     return { ok: true, value: { email, password } };
   }
   function createOnboardingService({ api, authService, learnerContext, storage = globalThis.sessionStorage, pendingKey = "learning-platform.pending-onboarding.v1" } = {}) {
@@ -1986,13 +1985,11 @@ var LearningPlatformCore = (() => {
       tabs.append(signInTab, registerTab);
       const form = createElement(document, "form", { className: "lp-form", noValidate: true });
       const firstName = formField(document, { id: "lp-register-first-name", label: "First name", autocomplete: "given-name" });
-      const surname = formField(document, { id: "lp-register-surname", label: "Surname", autocomplete: "family-name" });
+      const surname = formField(document, { id: "lp-register-surname", label: "Last name", autocomplete: "family-name" });
       const studentNumber = formField(document, { id: "lp-register-student-number", label: "Student ID", autocomplete: "off" });
-      const email = formField(document, { id: "lp-account-email", label: "Email address", type: "email", autocomplete: "username" });
+      const email = formField(document, { id: "lp-account-email", label: "Username", type: "email", autocomplete: "username" });
       const password = formField(document, { id: "lp-account-password", label: "Password", type: "password", autocomplete: "current-password" });
       password.input.minLength = 8;
-      const confirmation = formField(document, { id: "lp-account-password-confirm", label: "Confirm password", type: "password", autocomplete: "new-password" });
-      confirmation.input.minLength = 8;
       const status = createElement(document, "p", { className: "lp-form__status", role: "status", "aria-live": "polite", tabIndex: -1 });
       const submit = createElement(document, "button", { className: "lp-button", type: "submit", text: "Sign in" });
       form.append(
@@ -2001,18 +1998,23 @@ var LearningPlatformCore = (() => {
         studentNumber.wrapper,
         email.wrapper,
         password.wrapper,
-        confirmation.wrapper,
         status,
         createElement(document, "div", { className: "lp-form__actions" }, submit)
       );
       container.append(tabs, form);
+      function setRegisterField(field, registering) {
+        field.wrapper.hidden = !registering;
+        field.input.disabled = !registering;
+        field.input.required = registering;
+      }
       function setMode(next) {
         mode = next === "register" ? "register" : "sign-in";
         const registering = mode === "register";
-        firstName.wrapper.hidden = !registering;
-        surname.wrapper.hidden = !registering;
-        studentNumber.wrapper.hidden = !registering;
-        confirmation.wrapper.hidden = !registering;
+        setRegisterField(firstName, registering);
+        setRegisterField(surname, registering);
+        setRegisterField(studentNumber, registering);
+        email.wrapper.querySelector("label").textContent = registering ? "Email address" : "Username";
+        email.input.autocomplete = registering ? "email" : "username";
         password.input.autocomplete = registering ? "new-password" : "current-password";
         submit.textContent = registering ? "Create account" : "Sign in";
         signInTab.setAttribute("aria-selected", String(!registering));
@@ -2036,8 +2038,7 @@ var LearningPlatformCore = (() => {
               surname: surname.input.value,
               studentNumber: studentNumber.input.value,
               email: email.input.value,
-              password: password.input.value,
-              confirmPassword: confirmation.input.value
+              password: password.input.value
             };
             const accountCheck = onboardingService.validateAccount(details);
             const profileCheck = onboardingService.validateProfile(details);
@@ -2049,7 +2050,6 @@ var LearningPlatformCore = (() => {
             onboardingService.savePending(details);
             const result2 = await authService.signUp(accountCheck.value.email, accountCheck.value.password);
             password.input.value = "";
-            confirmation.input.value = "";
             if (result2.needsConfirmation) {
               setMode("sign-in");
               email.input.value = accountCheck.value.email;
@@ -2080,9 +2080,8 @@ var LearningPlatformCore = (() => {
       const messages = {
         INVALID_EMAIL: "Enter a valid email address.",
         WEAK_PASSWORD: "Choose a password with at least 8 characters.",
-        PASSWORD_MISMATCH: "Passwords do not match.",
         INVALID_FIRST_NAME: "Enter your first name.",
-        INVALID_SURNAME: "Enter your surname.",
+        INVALID_SURNAME: "Enter your last name.",
         INVALID_STUDENT_NUMBER: "Enter your Student ID."
       };
       return messages[code] || "The account request could not be completed. Check your details and try again.";

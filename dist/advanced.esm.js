@@ -485,7 +485,6 @@ function validateAccount(details = {}) {
   const password = typeof details.password === "string" ? details.password : "";
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return { ok: false, code: "INVALID_EMAIL" };
   if (password.length < 8) return { ok: false, code: "WEAK_PASSWORD" };
-  if (password !== details.confirmPassword) return { ok: false, code: "PASSWORD_MISMATCH" };
   return { ok: true, value: { email, password } };
 }
 function createOnboardingService({ api, authService, learnerContext, storage = globalThis.sessionStorage, pendingKey = "learning-platform.pending-onboarding.v1" } = {}) {

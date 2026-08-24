@@ -121,6 +121,7 @@
 
 .lp-form { display: grid; gap: var(--lp-space-4); }
 .lp-form__field { display: grid; gap: var(--lp-space-2); }
+.lp-form__field[hidden] { display: none !important; }
 .lp-form input,
 .lp-form select,
 .lp-form textarea { width: 100%; min-height: 2.75rem; padding: var(--lp-space-2); border: 0.125rem solid var(--lp-border-strong); border-radius: var(--lp-radius-sm); background: var(--lp-surface); color: var(--lp-text); font: inherit; }
