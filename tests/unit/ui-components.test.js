@@ -272,4 +272,5 @@ test("shared CSS defines mobile, small-phone and reduced-motion contracts", () =
   assert.match(css, /@media \(max-width: 24\.375rem\)/);
   assert.match(css, /prefers-reduced-motion/);
   assert.match(css, /overflow-wrap: anywhere/);
+  assert.match(css, /\.lp-form__field\[hidden\]/);
 });

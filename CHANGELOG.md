@@ -4,6 +4,13 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## [Unreleased]
 
+### Changed
+
+- Sign-in asks only for username and password. Registration asks for first name,
+  last name, Student ID, email and password, without a confirm-password field.
+- Form fields that use the `hidden` attribute are not shown, so sign-in no
+  longer displays the registration form.
+
 ### Added
 
 - `@learning-platform/core/curriculum-runtime` with `createPublishedCurriculumService`,
