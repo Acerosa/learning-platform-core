@@ -13,6 +13,8 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ### Added
 
+- Shared week visibility helpers in `@learning-platform/core/curriculum-runtime`:
+  `isWeekAvailable`, `overlayLiveWeekMetadata` and `weeksFromPublication`.
 - `@learning-platform/core/curriculum-runtime` with `createPublishedCurriculumService`,
   hub-scoped cache keys, publication version selection, schema gates and shared
   fallback policy. `createPlatform` exposes the same service as `platform.curriculum`.

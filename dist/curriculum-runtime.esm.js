@@ -391,6 +391,58 @@ function createPublishedCurriculumService(options = {}) {
     submissionMessage: (state) => (state || current)?.message || LEARNER_COPY.ERROR
   });
 }
+
+// src/curriculum-runtime/week-visibility.js
+function isWeekAvailable(status) {
+  return String(status ?? "").trim().toLowerCase() === "available";
+}
+function teachingWeekNumber(week) {
+  const n = Number(week?.metadata?.teachingWeek);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+function overlayLiveWeekMetadata(base, live) {
+  if (!base || typeof base !== "object") return base;
+  if (!live?.weeks?.length) return base;
+  const liveById = /* @__PURE__ */ new Map();
+  const liveByTeachingWeek = /* @__PURE__ */ new Map();
+  for (const week of live.weeks) {
+    if (week?.id) liveById.set(week.id, week.metadata);
+    const n = teachingWeekNumber(week);
+    if (n != null && !liveByTeachingWeek.has(n)) liveByTeachingWeek.set(n, week.metadata);
+  }
+  return {
+    ...base,
+    weeks: (base.weeks || []).map((week) => {
+      const n = teachingWeekNumber(week);
+      const liveMeta = (week?.id ? liveById.get(week.id) : void 0) || (n != null ? liveByTeachingWeek.get(n) : void 0);
+      if (!liveMeta) return week;
+      const liveStatus = liveMeta.status == null ? "" : String(liveMeta.status).trim();
+      return {
+        ...week,
+        metadata: {
+          ...week.metadata,
+          status: liveStatus || week.metadata?.status,
+          weekCommencing: liveMeta.weekCommencing ?? week.metadata?.weekCommencing
+        }
+      };
+    })
+  };
+}
+function weeksFromPublication(basePackage, livePackage) {
+  const pkg = livePackage?.weeks?.length ? overlayLiveWeekMetadata(basePackage, livePackage) : basePackage;
+  if (!pkg?.weeks?.length) return [];
+  return [...pkg.weeks].map((week) => {
+    const teachingWeek = Number(week.metadata?.teachingWeek || 0);
+    const status = String(week.metadata?.status ?? "").trim();
+    return {
+      id: week.id,
+      teachingWeek,
+      status,
+      available: isWeekAvailable(status),
+      title: week.metadata?.title || (teachingWeek ? `Week ${teachingWeek}` : week.id)
+    };
+  }).filter((week) => week.id && week.teachingWeek > 0).sort((left, right) => left.teachingWeek - right.teachingWeek);
+}
 export {
   CURRICULUM_CACHE_PREFIX,
   LEARNER_COPY,
@@ -405,7 +457,10 @@ export {
   createPublishedCurriculumService,
   createRuntimeSchemaLoader,
   curriculumCacheKey,
+  isWeekAvailable,
+  overlayLiveWeekMetadata,
   renderPublicationStatus,
-  resolvePublicationState
+  resolvePublicationState,
+  weeksFromPublication
 };
 //# sourceMappingURL=curriculum-runtime.esm.js.map

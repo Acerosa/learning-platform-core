@@ -98,6 +98,43 @@ A future hub should only need configuration equivalent to
 `createHub({ hubCode, courseKey, theme })`. Publication loading is automatic
 once `courseKey` is set on `createPlatform`.
 
+## Week visibility
+
+Published curriculum weeks expose learner access through
+`week.metadata.status`. The canonical values are `planned`, `available` and
+`archived`.
+
+| Status | Learner access |
+| --- | --- |
+| `available` | Accessible |
+| `planned` | Not accessible |
+| `archived` | Not accessible |
+| missing / unknown | Not accessible |
+
+Hubs must not infer access from week number, position, publication version or
+bundled configuration. Evaluate each week independently; non-sequential
+availability is valid (for example week 1 and week 3 available while week 2
+is planned).
+
+```js
+import {
+  isWeekAvailable,
+  overlayLiveWeekMetadata,
+  weeksFromPublication
+} from "@learning-platform/core/curriculum-runtime";
+
+const open = isWeekAvailable(week.metadata?.status);
+const runtimePackage = overlayLiveWeekMetadata(bundledPackage, livePackage);
+const weeks = weeksFromPublication(bundledPackage, livePackage);
+```
+
+`overlayLiveWeekMetadata` keeps bundled week structure and learner content while
+overlaying authoritative live publication metadata. When a live or cached
+publication is present, its `metadata.status` and `metadata.weekCommencing`
+win over bundled fallback values. This supports the existing resolver order
+(live publication → cached publication → bundled fallback) without replacing
+hub-specific rendering models.
+
 The nested package also exports `createCacheManager`, `createPublicationResolver`,
 `createCurriculumValidator` and `createRuntimeSchemaLoader` for tests. Hub
 application code should use `createPublishedCurriculumService` or
