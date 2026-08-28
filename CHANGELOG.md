@@ -4,6 +4,8 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## [Unreleased]
 
+## 0.2.1 - 2026-08-28
+
 ### Changed
 
 - Sign-in asks only for username and password. Registration asks for first name,
@@ -15,15 +17,11 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 - Shared week visibility helpers in `@learning-platform/core/curriculum-runtime`:
   `isWeekAvailable`, `overlayLiveWeekMetadata` and `weeksFromPublication`.
-- `@learning-platform/core/curriculum-runtime` with `createPublishedCurriculumService`,
-  hub-scoped cache keys, publication version selection, schema gates and shared
-  fallback policy. `createPlatform` exposes the same service as `platform.curriculum`.
-  Optional `courseKey` on platform configuration identifies the published course.
+- `@learning-platform/core/curriculum-runtime` package export with
+  `createPublishedCurriculumService`, hub-scoped cache keys, publication version
+  selection, schema gates and shared fallback policy.
 - Learner API helpers for `published_curriculum` metadata and
   `published_curriculum_package` teaching-package reads.
-- Architecture notes that Core must not own React presentation, curriculum
-  schemas or Admin behaviour; platform-wide design lives in the backend
-  architecture document.
 
 ## 0.1.0 - 2026-08-11
 
