@@ -16,3 +16,8 @@ export {
   renderPublicationStatus,
   resolvePublicationState
 } from "./published-curriculum-service.js";
+export {
+  isWeekAvailable,
+  overlayLiveWeekMetadata,
+  weeksFromPublication
+} from "./week-visibility.js";

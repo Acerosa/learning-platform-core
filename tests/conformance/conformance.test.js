@@ -68,7 +68,8 @@ test("shared source remains subject-neutral", async () => {
     new URL("../../src/index.js", import.meta.url),
     new URL("../../src/platform.js", import.meta.url),
     new URL("../../src/curriculum-runtime/index.js", import.meta.url),
-    new URL("../../src/curriculum-runtime/published-curriculum-service.js", import.meta.url)
+    new URL("../../src/curriculum-runtime/published-curriculum-service.js", import.meta.url),
+    new URL("../../src/curriculum-runtime/week-visibility.js", import.meta.url)
   ];
   for (const file of files) {
     const entry = await readFile(file, "utf8");
