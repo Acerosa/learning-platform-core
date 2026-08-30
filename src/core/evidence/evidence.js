@@ -83,8 +83,25 @@ export function toApiResponse(evidence) {
   return Object.freeze({
     question_id: questionKey(evidence.questionKey),
     response_type: evidence.evidenceType,
-    response_payload: evidence.value
+    response_payload: stripClientMarks(evidence.value)
   });
+}
+
+const CLIENT_MARK_FIELD = /^(awarded_score|awardedScore|is_correct|isCorrect)$/i;
+
+function stripClientMarks(value) {
+  if (Array.isArray(value)) {
+    return Object.freeze(value.map(stripClientMarks));
+  }
+  if (value && typeof value === "object") {
+    const next = {};
+    for (const [key, nested] of Object.entries(value)) {
+      if (CLIENT_MARK_FIELD.test(key)) continue;
+      next[key] = stripClientMarks(nested);
+    }
+    return Object.freeze(next);
+  }
+  return value;
 }
 
 export const evidence = Object.freeze({

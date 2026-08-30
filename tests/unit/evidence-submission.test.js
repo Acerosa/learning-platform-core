@@ -45,13 +45,30 @@ test("submission payload contains exactly the approved RPC arguments", () => {
 });
 
 test("submission boundary rejects identity, assignment and score fields", () => {
-  for (const field of ["learnerId", "studentNumber", "email", "enrolmentId", "assignmentId", "attemptNumber", "score", "maxScore"]) {
+  for (const field of ["learnerId", "studentNumber", "email", "enrolmentId", "assignmentId", "attemptNumber", "score", "maxScore", "awarded_score", "is_correct"]) {
     assert.throws(
       () => assertSecureSubmission({ activityKey: "a", [field]: "unsafe" }),
       (error) => error.code === "FORBIDDEN_SUBMISSION_FIELD",
       field
     );
   }
+});
+
+test("toApiResponse strips nested client mark fields from the payload", () => {
+  const payload = evidence.toApiResponse({
+    questionKey: "q-nested",
+    evidenceType: "written",
+    value: {
+      text: "learner answer",
+      awarded_score: 6,
+      is_correct: true,
+      awardedScore: 6,
+      isCorrect: true
+    }
+  });
+  assert.deepEqual(payload.response_payload, { text: "learner answer" });
+  assert.equal(JSON.stringify(payload).includes("awarded_score"), false);
+  assert.equal(JSON.stringify(payload).includes("is_correct"), false);
 });
 
 test("failed retries retain the client attempt ID and success clears it", async () => {

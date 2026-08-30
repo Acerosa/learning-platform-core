@@ -669,8 +669,23 @@ function toApiResponse(evidence2) {
   return Object.freeze({
     question_id: questionKey(evidence2.questionKey),
     response_type: evidence2.evidenceType,
-    response_payload: evidence2.value
+    response_payload: stripClientMarks(evidence2.value)
   });
+}
+var CLIENT_MARK_FIELD = /^(awarded_score|awardedScore|is_correct|isCorrect)$/i;
+function stripClientMarks(value) {
+  if (Array.isArray(value)) {
+    return Object.freeze(value.map(stripClientMarks));
+  }
+  if (value && typeof value === "object") {
+    const next = {};
+    for (const [key, nested] of Object.entries(value)) {
+      if (CLIENT_MARK_FIELD.test(key)) continue;
+      next[key] = stripClientMarks(nested);
+    }
+    return Object.freeze(next);
+  }
+  return value;
 }
 var evidence = Object.freeze({
   singleChoice,
@@ -695,7 +710,7 @@ var ALLOWED_FIELDS = Object.freeze([
   "completedAt",
   "programmingLanguage"
 ]);
-var FORBIDDEN_FIELD = /^(learner|learnerId|learner_id|student|studentId|student_id|studentNumber|student_number|firstName|first_name|surname|email|enrolment|enrolmentId|enrolment_id|assignment|assignmentId|assignment_id|attemptNumber|attempt_number|score|totalScore|total_score|maxScore|max_score)$/i;
+var FORBIDDEN_FIELD = /^(learner|learnerId|learner_id|student|studentId|student_id|studentNumber|student_number|firstName|first_name|surname|email|enrolment|enrolmentId|enrolment_id|assignment|assignmentId|assignment_id|attemptNumber|attempt_number|score|totalScore|total_score|maxScore|max_score|awarded_score|awardedScore|is_correct|isCorrect)$/i;
 function requiredString(value, code) {
   const clean3 = typeof value === "string" ? value.trim() : "";
   if (!clean3) throw new PlatformError({ code, category: "validation" });

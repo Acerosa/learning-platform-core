@@ -4,6 +4,10 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## [Unreleased]
 
+### Security
+
+- `toApiResponse` strips nested `awarded_score` / `is_correct` (and camelCase aliases) from evidence payloads. `assertSecureSubmission` also rejects those fields at the submission boundary. The backend remains the scoring authority.
+
 ## 0.2.1 - 2026-08-28
 
 ### Changed
