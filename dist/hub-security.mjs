@@ -61,7 +61,9 @@ var SKIP_DIRS = /* @__PURE__ */ new Set([
   ".git",
   "coverage",
   ".vite",
-  "supabase"
+  "supabase",
+  "vendor",
+  "scripts"
 ]);
 var CODE_EXT = /* @__PURE__ */ new Set([".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx"]);
 function result(id, passed, message, severity = "error", evidence = null) {
@@ -93,6 +95,37 @@ function isTestPath(rel) {
 }
 function stripComments(source) {
   return String(source || "").replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+}
+function sliceBalancedFunction(source, name) {
+  const match = source.match(new RegExp(`(?:export\\s+)?function\\s+${name}\\s*\\(`));
+  if (!match || match.index == null) return null;
+  const brace = source.indexOf("{", match.index);
+  if (brace < 0) return null;
+  let depth = 0;
+  for (let index = brace; index < source.length; index += 1) {
+    const ch = source[index];
+    if (ch === "{") depth += 1;
+    else if (ch === "}") {
+      depth -= 1;
+      if (depth === 0) return { start: match.index, end: index + 1 };
+    }
+  }
+  return null;
+}
+function isApprovedRendererBody(body) {
+  return /script/i.test(body) && /javascript/i.test(body) && /\.innerHTML\s*=|dangerouslySetInnerHTML/.test(body);
+}
+function withoutApprovedRendererBodies(source) {
+  let next = String(source || "");
+  for (const name of ["setAuthoredHtml", "AuthoredHtml"]) {
+    const span = sliceBalancedFunction(next, name);
+    if (!span) continue;
+    const body = next.slice(span.start, span.end);
+    if (isApprovedRendererBody(body)) {
+      next = `${next.slice(0, span.start)}${next.slice(span.end)}`;
+    }
+  }
+  return next;
 }
 function isDenyListContext(source, field) {
   return new RegExp(
@@ -171,7 +204,7 @@ function scanHubSecurity(rootDir = process.cwd()) {
     missingVersion[0]?.rel
   ));
   const inventedVersion = sources.filter(
-    (item) => /activityVersion\s*:\s*[^,\n]*\|\|\s*["']0\.1\.0["']/.test(item.source) || /activity\.version\s*\|\|\s*["']0\.1\.0["']/.test(item.source)
+    (item) => /activityVersion\s*:\s*[^,\n]*\|\|\s*["'](?:0\.1\.0|1\.0\.0|latest)["']/.test(item.source) || /activity\.version\s*\|\|\s*["'](?:0\.1\.0|1\.0\.0|latest)["']/.test(item.source)
   );
   results.push(result(
     "HSB-05.no-invented-default",
@@ -214,13 +247,13 @@ function scanHubSecurity(rootDir = process.cwd()) {
     fakeSuccess[0]?.rel
   ));
   const htmlHits = sources.filter(
-    (item) => /\.innerHTML\s*=|dangerouslySetInnerHTML/.test(item.source)
+    (item) => /\.innerHTML\s*=|dangerouslySetInnerHTML/.test(withoutApprovedRendererBodies(item.source))
   );
   const htmlExempt = exceptions.includes("HSB-11");
   results.push(result(
     "HSB-11.authored-html",
     htmlHits.length === 0 || htmlExempt,
-    htmlHits.length === 0 ? "No raw innerHTML / dangerouslySetInnerHTML in production source." : htmlExempt ? "Legacy HTML rendering is recorded as exception HSB-11." : "Raw HTML rendering is present; use the approved shared renderer or record exception HSB-11.",
+    htmlHits.length === 0 ? "No raw innerHTML / dangerouslySetInnerHTML in production source." : htmlExempt ? "Legacy HTML rendering is recorded as exception HSB-11." : "Raw HTML rendering is present; use setAuthoredHtml or AuthoredHtml.",
     htmlHits.length && !htmlExempt ? "warning" : "warning",
     htmlHits[0]?.rel
   ));

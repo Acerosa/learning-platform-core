@@ -9,6 +9,13 @@ All notable changes are documented here. This project follows Semantic Versionin
 - Nested client mark and identity fields are not accepted as authority on evidence payloads. The backend remains the scoring authority.
 - Hub Security Baseline v1.0: hubs pin the shared contract and run the Node scanner (`@learning-platform/core/hub-security`). High-level guarantees are in `docs/hub-security-baseline-v1.md`.
 
+## 0.2.3 - 2026-08-31
+
+### Security
+
+- Shared authored-HTML renderer (`setAuthoredHtml`, `isUnsafeAuthoredHtml`) and `resolveActivityVersion` for catalogue versions. Missing or invalid versions fail closed.
+- Hub Security scanner recognises the approved renderer. Vendored snapshots and hub codegen scripts are not treated as learner production source. Invented `1.0.0` / `latest` version fallbacks are flagged. Check severity is unchanged.
+
 ## 0.2.1 - 2026-08-28
 
 ### Changed

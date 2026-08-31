@@ -13,7 +13,7 @@ The core package owns reusable platform behaviour and shared learner UI grammar.
 | Authentication and session restoration | Curriculum and learning outcomes |
 | Registration and onboarding | Learning resources and assessments |
 | Learner context and header | Subject-specific activity data |
-| Approved API client | Specialist renderers where justified |
+| Approved authored HTML rendering | Specialist renderers where justified |
 | Submission and evidence envelope | Subject branding token values |
 | Backend-derived progress | Subject guidance and pedagogy |
 | Errors, loading, notifications, navigation and week/session/activity chrome | Route availability, branding values and curriculum copy |
