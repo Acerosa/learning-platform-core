@@ -152,7 +152,7 @@ const result = await platform.submission.submit({
 
 On failure, retry the same input. The attempt ID remains in session storage and makes the retry idempotent. On success, it is cleared. Call `beginAttempt(activity.key)` only when the learner deliberately starts a new attempt.
 
-The service rejects unknown input fields and all identity, enrolment, assignment, attempt-number and score fields.
+The service rejects unknown input fields and all identity, enrolment, assignment, attempt-number and score fields. When Auth is wired through `createPlatform`, `submit` also requires a signed-in session (`AUTH_REQUIRED`).
 
 ## 8. Handle errors and notifications
 

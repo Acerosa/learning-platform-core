@@ -1,4 +1,5 @@
 import { PlatformError } from "../errors/platform-error.js";
+import { FORBIDDEN_IDENTITY_FIELD, FORBIDDEN_MARK_FIELD } from "../security/hub-security-baseline.js";
 
 export const EVIDENCE_TYPES = Object.freeze([
   "single-choice",
@@ -80,6 +81,7 @@ export function toApiResponse(evidence) {
   if (!evidence || !EVIDENCE_TYPES.includes(evidence.evidenceType)) {
     throw new PlatformError({ code: "INVALID_EVIDENCE", category: "validation" });
   }
+  assertNoIdentityFields(evidence.value);
   return Object.freeze({
     question_id: questionKey(evidence.questionKey),
     response_type: evidence.evidenceType,
@@ -87,7 +89,24 @@ export function toApiResponse(evidence) {
   });
 }
 
-const CLIENT_MARK_FIELD = /^(awarded_score|awardedScore|is_correct|isCorrect)$/i;
+function assertNoIdentityFields(value) {
+  if (Array.isArray(value)) {
+    value.forEach(assertNoIdentityFields);
+    return;
+  }
+  if (value && typeof value === "object") {
+    for (const [key, nested] of Object.entries(value)) {
+      if (FORBIDDEN_IDENTITY_FIELD.test(key)) {
+        throw new PlatformError({
+          code: "FORBIDDEN_SUBMISSION_FIELD",
+          category: "submission",
+          diagnostic: { field: key }
+        });
+      }
+      assertNoIdentityFields(nested);
+    }
+  }
+}
 
 function stripClientMarks(value) {
   if (Array.isArray(value)) {
@@ -96,7 +115,7 @@ function stripClientMarks(value) {
   if (value && typeof value === "object") {
     const next = {};
     for (const [key, nested] of Object.entries(value)) {
-      if (CLIENT_MARK_FIELD.test(key)) continue;
+      if (FORBIDDEN_MARK_FIELD.test(key)) continue;
       next[key] = stripClientMarks(nested);
     }
     return Object.freeze(next);

@@ -57,6 +57,7 @@ Build outputs:
 - `dist/learning-platform-core.iife.js` — browser global named `LearningPlatformCore`.
 - `dist/advanced.esm.js` — explicitly non-stable low-level factories for exceptional integrations.
 - `dist/conformance.esm.js` — standalone conformance entry.
+- `dist/hub-security.mjs` — Node Hub Security Baseline scanner for learner hubs.
 - `dist/theme.css` and `dist/tokens.css` — shared visual layer.
 
 ## Static browser usage
@@ -162,7 +163,7 @@ The platform config applies equivalent `theme.primary` and `theme.accent` values
 - Keep service-role keys and raw backend errors out of browser code and learner messages.
 - Treat redacted logs as operational hints, not a data store.
 
-See [Security](docs/security.md) for the detailed trust boundary.
+See [Security](docs/security.md) and [Hub Security Baseline v1](docs/hub-security-baseline-v1.md) for the public security guarantees.
 
 ## Conformance checks
 

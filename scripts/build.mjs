@@ -33,6 +33,14 @@ await Promise.all([
   }),
   build({
     ...shared,
+    entryPoints: ["src/conformance/hub-security-cli.js"],
+    outfile: "dist/hub-security.mjs",
+    format: "esm",
+    platform: "node",
+    banner: { js: "#!/usr/bin/env node" }
+  }),
+  build({
+    ...shared,
     entryPoints: ["src/advanced.js"],
     outfile: "dist/advanced.esm.js",
     format: "esm"

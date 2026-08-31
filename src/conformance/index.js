@@ -1,5 +1,9 @@
 import { STANDARD_NAVIGATION } from "../core/config/platform-config.js";
 import { assertSecureSubmission } from "../core/submission/submission-service.js";
+export {
+  HUB_SECURITY_BASELINE_VERSION,
+  HUB_SECURITY_CONTROLS
+} from "../core/security/hub-security-baseline.js";
 
 const MANIFEST_FIELDS = Object.freeze([
   "hubCode",

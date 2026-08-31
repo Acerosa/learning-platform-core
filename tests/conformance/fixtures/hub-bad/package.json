@@ -1,0 +1,8 @@
+{
+  "name": "fixture-hub-bad",
+  "private": true,
+  "scripts": {},
+  "learningPlatform": {
+    "securityBaseline": "0.0"
+  }
+}

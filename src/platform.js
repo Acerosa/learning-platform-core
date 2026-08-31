@@ -40,6 +40,7 @@ export function createPlatform(options = {}, dependencies = {}) {
   });
   const submission = createSubmissionService({
     api,
+    auth,
     storage: dependencies.sessionStorage,
     crypto: dependencies.crypto
   });

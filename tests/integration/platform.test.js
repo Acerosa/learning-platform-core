@@ -48,6 +48,28 @@ test("platform composes auth, learner context, assignments, progress and submiss
   platform.destroy();
 });
 
+test("platform submission rejects signed-out users", async () => {
+  const client = fakeSupabase();
+  const platform = createPlatform({
+    hubCode: "test-hub",
+    hubName: "Test Hub"
+  }, {
+    supabaseClient: client,
+    sessionStorage: memoryStorage(),
+    document: null,
+    window: null
+  });
+  await assert.rejects(
+    platform.submission.submit({
+      activityKey: "activity-1",
+      activityVersion: "1.0.0",
+      responses: [evidence.written("q1", "answer")]
+    }),
+    (error) => error.code === "AUTH_REQUIRED"
+  );
+  platform.destroy();
+});
+
 test("platform reports onboarding-required when the authenticated profile is absent", async () => {
   const client = fakeSupabase({
     session: { access_token: "managed" },

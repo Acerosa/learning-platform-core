@@ -1,18 +1,12 @@
 import { PlatformError, mapPlatformError } from "../errors/platform-error.js";
 import { toApiResponse } from "../evidence/evidence.js";
+import {
+  ALLOWED_SUBMISSION_FIELDS,
+  FORBIDDEN_SUBMISSION_FIELD,
+  canonicalActivityVersion
+} from "../security/hub-security-baseline.js";
 
-const ALLOWED_FIELDS = Object.freeze([
-  "activityKey",
-  "activityVersion",
-  "clientAttemptId",
-  "responses",
-  "sourcePage",
-  "startedAt",
-  "completedAt",
-  "programmingLanguage"
-]);
-
-const FORBIDDEN_FIELD = /^(learner|learnerId|learner_id|student|studentId|student_id|studentNumber|student_number|firstName|first_name|surname|email|enrolment|enrolmentId|enrolment_id|assignment|assignmentId|assignment_id|attemptNumber|attempt_number|score|totalScore|total_score|maxScore|max_score|awarded_score|awardedScore|is_correct|isCorrect)$/i;
+const ALLOWED_FIELDS = ALLOWED_SUBMISSION_FIELDS;
 
 function requiredString(value, code) {
   const clean = typeof value === "string" ? value.trim() : "";
@@ -59,7 +53,7 @@ export function assertSecureSubmission(input) {
     throw new PlatformError({ code: "INVALID_SUBMISSION", category: "validation" });
   }
   Object.keys(input).forEach((key) => {
-    if (FORBIDDEN_FIELD.test(key)) {
+    if (FORBIDDEN_SUBMISSION_FIELD.test(key)) {
       throw new PlatformError({ code: "FORBIDDEN_SUBMISSION_FIELD", category: "submission", diagnostic: { field: key } });
     }
     if (!ALLOWED_FIELDS.includes(key)) {
@@ -69,7 +63,21 @@ export function assertSecureSubmission(input) {
   return true;
 }
 
-export function createSubmissionService({ api, storage = globalThis.sessionStorage, crypto = globalThis.crypto } = {}) {
+export { canonicalActivityVersion };
+
+export function createSubmissionService({
+  api,
+  auth = null,
+  storage = globalThis.sessionStorage,
+  crypto = globalThis.crypto
+} = {}) {
+  function requireSignedIn() {
+    if (!auth || typeof auth.isSignedIn !== "function") return;
+    if (auth.isSignedIn() !== true) {
+      throw new PlatformError({ code: "AUTH_REQUIRED", category: "authentication" });
+    }
+  }
+
   function getAttemptId(activityKey) {
     const key = storageKey(requiredString(activityKey, "ACTIVITY_KEY_REQUIRED"));
     try {
@@ -90,7 +98,10 @@ export function createSubmissionService({ api, storage = globalThis.sessionStora
   function buildPayload(input) {
     assertSecureSubmission(input);
     const activityKey = requiredString(input.activityKey, "ACTIVITY_KEY_REQUIRED");
-    const activityVersion = requiredString(input.activityVersion, "ACTIVITY_VERSION_REQUIRED");
+    const activityVersion = requiredString(
+      canonicalActivityVersion(input.activityVersion),
+      "ACTIVITY_VERSION_REQUIRED"
+    );
     if (!Array.isArray(input.responses) || input.responses.length === 0) {
       throw new PlatformError({ code: "RESPONSES_REQUIRED", category: "validation" });
     }
@@ -111,6 +122,7 @@ export function createSubmissionService({ api, storage = globalThis.sessionStora
   }
 
   async function submit(input) {
+    requireSignedIn();
     const payload = buildPayload(input);
     try {
       const result = await api.submitAttempt(payload);

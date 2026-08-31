@@ -146,6 +146,7 @@ test("package metadata pins the tested SDK and exports no deep source paths", as
   assert.equal(installed.version, "2.112.3");
   assert.equal(packageJson.exports["./advanced"], "./dist/advanced.esm.js");
   assert.equal(packageJson.exports["./curriculum-runtime"], "./dist/curriculum-runtime.esm.js");
+  assert.equal(packageJson.exports["./hub-security"], "./dist/hub-security.mjs");
   assert.equal(packageJson.files.includes("src"), false);
 });
 
