@@ -14,6 +14,8 @@ Hubs that pin this baseline:
 - published versions are immutable
 - client-side state is not authoritative
 - hubs conform to the shared Hub Security Baseline rather than inventing a parallel security model
+- authored teaching HTML is rendered through the shared refuse-list renderer
+- activity versions used for submission come from published catalogue metadata
 
 ## Adoption
 

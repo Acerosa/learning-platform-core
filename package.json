@@ -1,6 +1,6 @@
 {
   "name": "@learning-platform/core",
-  "version": "0.2.1",
+  "version": "0.2.3",
   "description": "Framework-free shared frontend services and UI for Learning Platform learner hubs.",
   "type": "module",
   "main": "./dist/learning-platform-core.esm.js",

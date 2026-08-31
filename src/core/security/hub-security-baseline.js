@@ -71,6 +71,24 @@ export function canonicalActivityVersion(value) {
   return clean;
 }
 
+/**
+ * Resolve the catalogue activity version for drafts and submission.
+ * Missing, empty, or non-version tokens such as "latest" fail closed.
+ */
+export function resolveActivityVersion(activity) {
+  if (!activity || typeof activity !== "object") return "";
+  const raw = typeof activity.version === "string"
+    ? activity.version
+    : typeof activity.activityVersion === "string"
+      ? activity.activityVersion
+      : "";
+  const canonical = canonicalActivityVersion(raw);
+  if (!canonical) return "";
+  if (/^latest$/i.test(canonical)) return "";
+  if (!/^\d+\.\d+\.\d+/.test(canonical)) return "";
+  return canonical;
+}
+
 export function declaredHubExceptions(packageJson) {
   const declared = packageJson?.learningPlatform?.exceptions;
   if (!Array.isArray(declared)) return Object.freeze([]);

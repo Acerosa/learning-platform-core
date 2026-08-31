@@ -767,6 +767,15 @@ function canonicalActivityVersion(value) {
   if (/^\d+\.\d+$/.test(clean3)) return `${clean3}.0`;
   return clean3;
 }
+function resolveActivityVersion(activity) {
+  if (!activity || typeof activity !== "object") return "";
+  const raw = typeof activity.version === "string" ? activity.version : typeof activity.activityVersion === "string" ? activity.activityVersion : "";
+  const canonical = canonicalActivityVersion(raw);
+  if (!canonical) return "";
+  if (/^latest$/i.test(canonical)) return "";
+  if (!/^\d+\.\d+\.\d+/.test(canonical)) return "";
+  return canonical;
+}
 
 // src/core/evidence/evidence.js
 var EVIDENCE_TYPES = Object.freeze([
@@ -1647,6 +1656,39 @@ function shouldShowContext(features, contextType) {
 }
 function isIndependentKind(kind) {
   return kind === "independent-study" || kind === "homework";
+}
+
+// src/core/security/authored-html.js
+var SCRIPT = /<\s*script\b/i;
+var IFRAME = /<\s*iframe\b/i;
+var OBJECT = /<\s*object\b/i;
+var EMBED = /<\s*embed\b/i;
+var SRCDOC = /\bsrcdoc\s*=/i;
+var JS_URL = /javascript\s*:/i;
+var DATA_HTML = /data\s*:\s*text\s*\/\s*html/i;
+var EVENT_ATTR = /\son[a-z]+\s*=/i;
+function isUnsafeAuthoredHtml(html) {
+  const value = String(html || "");
+  return SCRIPT.test(value) || IFRAME.test(value) || OBJECT.test(value) || EMBED.test(value) || SRCDOC.test(value) || JS_URL.test(value) || DATA_HTML.test(value) || EVENT_ATTR.test(value);
+}
+function clearElement(element) {
+  if (typeof element.replaceChildren === "function") {
+    element.replaceChildren();
+    return;
+  }
+  element.textContent = "";
+}
+function setAuthoredHtml(element, html) {
+  if (!element) return false;
+  const value = html == null ? "" : String(html);
+  if (element.dataset) delete element.dataset.lpHtmlRejected;
+  if (isUnsafeAuthoredHtml(value)) {
+    clearElement(element);
+    if (element.dataset) element.dataset.lpHtmlRejected = "true";
+    return false;
+  }
+  element.innerHTML = value;
+  return true;
 }
 
 // src/ui/dom.js
@@ -2758,6 +2800,7 @@ export {
   WEEK_UI_FEATURES,
   applyBranding,
   assertConformant,
+  canonicalActivityVersion,
   createAccountDialog,
   createActivityCard,
   createBreadcrumbs,
@@ -2788,9 +2831,12 @@ export {
   createWeekView,
   curriculumCacheKey,
   evidence,
+  isUnsafeAuthoredHtml,
   mergeWeekUiFeatures,
   renderPublicationStatus,
+  resolveActivityVersion,
   resolvePublicationState,
-  runConformanceChecks
+  runConformanceChecks,
+  setAuthoredHtml
 };
 //# sourceMappingURL=learning-platform-core.esm.js.map

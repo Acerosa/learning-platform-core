@@ -22,6 +22,11 @@ export {
   mergeWeekUiFeatures
 } from "./ui/contracts.js";
 export { evidence, EVIDENCE_TYPES } from "./core/evidence/evidence.js";
+export {
+  canonicalActivityVersion,
+  resolveActivityVersion
+} from "./core/security/hub-security-baseline.js";
+export { isUnsafeAuthoredHtml, setAuthoredHtml } from "./core/security/authored-html.js";
 export { PLATFORM_STATES } from "./core/state/platform-state.js";
 export { PlatformError, ERROR_CATEGORIES } from "./core/errors/platform-error.js";
 export { createThemeService, applyBranding, THEME_MODES, THEME_EVENT } from "./theme/theme.js";

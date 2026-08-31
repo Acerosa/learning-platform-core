@@ -58,9 +58,13 @@ const STABLE_EXPORTS = Object.freeze([
   "createWeekHeader",
   "createWeekNavigation",
   "createWeekView",
+  "canonicalActivityVersion",
   "evidence",
+  "isUnsafeAuthoredHtml",
   "mergeWeekUiFeatures",
-  "runConformanceChecks"
+  "resolveActivityVersion",
+  "runConformanceChecks",
+  "setAuthoredHtml"
 ].sort());
 
 const ADVANCED_EXPORTS = Object.freeze([
