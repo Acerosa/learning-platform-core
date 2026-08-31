@@ -16,6 +16,7 @@ Hubs that pin this baseline:
 - hubs conform to the shared Hub Security Baseline rather than inventing a parallel security model
 - authored teaching HTML is rendered through the shared refuse-list renderer
 - activity versions used for submission come from published catalogue metadata
+- learner bundles exclude authoritative marking data
 
 ## Adoption
 
