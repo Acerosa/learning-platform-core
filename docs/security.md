@@ -1,5 +1,7 @@
 # Security model
 
+See [Hub Security Baseline v1](hub-security-baseline-v1.md) for the high-level hub security contract. Enforcement is in the shared runtime and tests.
+
 ## Browser trust
 
 The browser captures evidence and renders platform data. It is not authoritative for identity, enrolment, permissions, assignment selection, attempt numbering, marks or progress.

@@ -597,6 +597,59 @@ function createProgressService(api) {
   });
 }
 
+// src/core/security/hub-security-baseline.js
+var HUB_SECURITY_CONTROLS = Object.freeze([
+  "HSB-01",
+  "HSB-02",
+  "HSB-03",
+  "HSB-04",
+  "HSB-05",
+  "HSB-06",
+  "HSB-07",
+  "HSB-08",
+  "HSB-09",
+  "HSB-10",
+  "HSB-11",
+  "HSB-12",
+  "HSB-13",
+  "HSB-14",
+  "HSB-15"
+]);
+var FORBIDDEN_IDENTITY_FIELD = /^(learner_id|learnerId|student_id|studentId|enrolment_id|enrolmentId|group_id|groupId)$/i;
+var FORBIDDEN_MARK_FIELD = /^(awarded_score|awardedScore|is_correct|isCorrect|marking_source|markingSource)$/i;
+var FORBIDDEN_SUBMISSION_FIELD = /^(learner|learnerId|learner_id|student|studentId|student_id|studentNumber|student_number|firstName|first_name|surname|email|enrolment|enrolmentId|enrolment_id|assignment|assignmentId|assignment_id|attemptNumber|attempt_number|score|totalScore|total_score|maxScore|max_score|awarded_score|awardedScore|is_correct|isCorrect|marking_source|markingSource|groupId|group_id)$/i;
+var ALLOWED_SUBMISSION_FIELDS = Object.freeze([
+  "activityKey",
+  "activityVersion",
+  "clientAttemptId",
+  "responses",
+  "sourcePage",
+  "startedAt",
+  "completedAt",
+  "programmingLanguage"
+]);
+var APPROVED_BROWSER_STORAGE = Object.freeze([
+  "draft responses",
+  "UI state",
+  "cached server progress",
+  "unsent retry payloads",
+  "idempotent client attempt IDs"
+]);
+var AUTHORITATIVE_STORAGE_FORBIDDEN = Object.freeze([
+  "final score",
+  "correctness",
+  "learner identity",
+  "enrolment",
+  "official completion",
+  "official progress"
+]);
+function canonicalActivityVersion(value) {
+  const clean3 = typeof value === "string" ? value.trim() : "";
+  if (!clean3) return "";
+  if (/^\d+\.\d+$/.test(clean3)) return `${clean3}.0`;
+  return clean3;
+}
+
 // src/core/evidence/evidence.js
 var EVIDENCE_TYPES = Object.freeze([
   "single-choice",
@@ -666,13 +719,31 @@ function toApiResponse(evidence2) {
   if (!evidence2 || !EVIDENCE_TYPES.includes(evidence2.evidenceType)) {
     throw new PlatformError({ code: "INVALID_EVIDENCE", category: "validation" });
   }
+  assertNoIdentityFields(evidence2.value);
   return Object.freeze({
     question_id: questionKey(evidence2.questionKey),
     response_type: evidence2.evidenceType,
     response_payload: stripClientMarks(evidence2.value)
   });
 }
-var CLIENT_MARK_FIELD = /^(awarded_score|awardedScore|is_correct|isCorrect)$/i;
+function assertNoIdentityFields(value) {
+  if (Array.isArray(value)) {
+    value.forEach(assertNoIdentityFields);
+    return;
+  }
+  if (value && typeof value === "object") {
+    for (const [key, nested] of Object.entries(value)) {
+      if (FORBIDDEN_IDENTITY_FIELD.test(key)) {
+        throw new PlatformError({
+          code: "FORBIDDEN_SUBMISSION_FIELD",
+          category: "submission",
+          diagnostic: { field: key }
+        });
+      }
+      assertNoIdentityFields(nested);
+    }
+  }
+}
 function stripClientMarks(value) {
   if (Array.isArray(value)) {
     return Object.freeze(value.map(stripClientMarks));
@@ -680,7 +751,7 @@ function stripClientMarks(value) {
   if (value && typeof value === "object") {
     const next = {};
     for (const [key, nested] of Object.entries(value)) {
-      if (CLIENT_MARK_FIELD.test(key)) continue;
+      if (FORBIDDEN_MARK_FIELD.test(key)) continue;
       next[key] = stripClientMarks(nested);
     }
     return Object.freeze(next);
@@ -700,17 +771,7 @@ var evidence = Object.freeze({
 });
 
 // src/core/submission/submission-service.js
-var ALLOWED_FIELDS = Object.freeze([
-  "activityKey",
-  "activityVersion",
-  "clientAttemptId",
-  "responses",
-  "sourcePage",
-  "startedAt",
-  "completedAt",
-  "programmingLanguage"
-]);
-var FORBIDDEN_FIELD = /^(learner|learnerId|learner_id|student|studentId|student_id|studentNumber|student_number|firstName|first_name|surname|email|enrolment|enrolmentId|enrolment_id|assignment|assignmentId|assignment_id|attemptNumber|attempt_number|score|totalScore|total_score|maxScore|max_score|awarded_score|awardedScore|is_correct|isCorrect)$/i;
+var ALLOWED_FIELDS = ALLOWED_SUBMISSION_FIELDS;
 function requiredString(value, code) {
   const clean3 = typeof value === "string" ? value.trim() : "";
   if (!clean3) throw new PlatformError({ code, category: "validation" });
@@ -751,7 +812,7 @@ function assertSecureSubmission(input) {
     throw new PlatformError({ code: "INVALID_SUBMISSION", category: "validation" });
   }
   Object.keys(input).forEach((key) => {
-    if (FORBIDDEN_FIELD.test(key)) {
+    if (FORBIDDEN_SUBMISSION_FIELD.test(key)) {
       throw new PlatformError({ code: "FORBIDDEN_SUBMISSION_FIELD", category: "submission", diagnostic: { field: key } });
     }
     if (!ALLOWED_FIELDS.includes(key)) {
@@ -760,7 +821,18 @@ function assertSecureSubmission(input) {
   });
   return true;
 }
-function createSubmissionService({ api, storage = globalThis.sessionStorage, crypto = globalThis.crypto } = {}) {
+function createSubmissionService({
+  api,
+  auth = null,
+  storage = globalThis.sessionStorage,
+  crypto = globalThis.crypto
+} = {}) {
+  function requireSignedIn() {
+    if (!auth || typeof auth.isSignedIn !== "function") return;
+    if (auth.isSignedIn() !== true) {
+      throw new PlatformError({ code: "AUTH_REQUIRED", category: "authentication" });
+    }
+  }
   function getAttemptId(activityKey) {
     const key = storageKey(requiredString(activityKey, "ACTIVITY_KEY_REQUIRED"));
     try {
@@ -786,7 +858,10 @@ function createSubmissionService({ api, storage = globalThis.sessionStorage, cry
   function buildPayload(input) {
     assertSecureSubmission(input);
     const activityKey = requiredString(input.activityKey, "ACTIVITY_KEY_REQUIRED");
-    const activityVersion = requiredString(input.activityVersion, "ACTIVITY_VERSION_REQUIRED");
+    const activityVersion = requiredString(
+      canonicalActivityVersion(input.activityVersion),
+      "ACTIVITY_VERSION_REQUIRED"
+    );
     if (!Array.isArray(input.responses) || input.responses.length === 0) {
       throw new PlatformError({ code: "RESPONSES_REQUIRED", category: "validation" });
     }
@@ -802,6 +877,7 @@ function createSubmissionService({ api, storage = globalThis.sessionStorage, cry
     });
   }
   async function submit(input) {
+    requireSignedIn();
     const payload = buildPayload(input);
     try {
       const result = await api.submitAttempt(payload);

@@ -11,6 +11,7 @@
     "./curriculum-runtime": "./dist/curriculum-runtime.esm.js",
     "./advanced": "./dist/advanced.esm.js",
     "./conformance": "./dist/conformance.esm.js",
+    "./hub-security": "./dist/hub-security.mjs",
     "./theme.css": "./dist/theme.css",
     "./tokens.css": "./dist/tokens.css",
     "./package.json": "./package.json"
@@ -26,7 +27,7 @@
     "build": "node scripts/build.mjs",
     "syntax": "node scripts/check-syntax.mjs",
     "test": "node --test",
-    "test:conformance": "node --test tests/conformance/conformance.test.js",
+    "test:conformance": "node --test tests/conformance/conformance.test.js tests/conformance/hub-security.test.js",
     "test:contracts": "node --test tests/contracts/public-api.test.js",
     "check": "npm run syntax && npm run build && npm test"
   },

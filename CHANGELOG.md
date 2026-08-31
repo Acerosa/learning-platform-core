@@ -6,7 +6,8 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ### Security
 
-- `toApiResponse` strips nested `awarded_score` / `is_correct` (and camelCase aliases) from evidence payloads. `assertSecureSubmission` also rejects those fields at the submission boundary. The backend remains the scoring authority.
+- Nested client mark and identity fields are not accepted as authority on evidence payloads. The backend remains the scoring authority.
+- Hub Security Baseline v1.0: hubs pin the shared contract and run the Node scanner (`@learning-platform/core/hub-security`). High-level guarantees are in `docs/hub-security-baseline-v1.md`.
 
 ## 0.2.1 - 2026-08-28
 

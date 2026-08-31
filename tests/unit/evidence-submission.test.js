@@ -45,13 +45,67 @@ test("submission payload contains exactly the approved RPC arguments", () => {
 });
 
 test("submission boundary rejects identity, assignment and score fields", () => {
-  for (const field of ["learnerId", "studentNumber", "email", "enrolmentId", "assignmentId", "attemptNumber", "score", "maxScore", "awarded_score", "is_correct"]) {
+  for (const field of [
+    "learnerId",
+    "studentNumber",
+    "email",
+    "enrolmentId",
+    "assignmentId",
+    "attemptNumber",
+    "score",
+    "maxScore",
+    "awarded_score",
+    "is_correct",
+    "marking_source",
+    "groupId"
+  ]) {
     assert.throws(
       () => assertSecureSubmission({ activityKey: "a", [field]: "unsafe" }),
       (error) => error.code === "FORBIDDEN_SUBMISSION_FIELD",
       field
     );
   }
+});
+
+test("two-part activity versions are canonicalised as metadata aliases", () => {
+  const service = createSubmissionService({
+    api: { submitAttempt: async (payload) => payload },
+    storage: memoryStorage(),
+    crypto: { randomUUID: () => "00000000-0000-4000-8000-000000000004" }
+  });
+  const payload = service.buildPayload({
+    activityKey: "activity-1",
+    activityVersion: "1.0",
+    responses: [evidence.written("q1", "answer")]
+  });
+  assert.equal(payload.p_activity_version, "1.0.0");
+});
+
+test("toApiResponse rejects nested identity fields", () => {
+  assert.throws(
+    () => evidence.toApiResponse({
+      questionKey: "q-id",
+      evidenceType: "written",
+      value: { text: "answer", student_id: "S1" }
+    }),
+    (error) => error.code === "FORBIDDEN_SUBMISSION_FIELD"
+  );
+});
+
+test("submit requires a signed-in session when Auth is wired", async () => {
+  const service = createSubmissionService({
+    auth: { isSignedIn: () => false },
+    api: { submitAttempt: async () => ({ ok: true }) },
+    storage: memoryStorage()
+  });
+  await assert.rejects(
+    service.submit({
+      activityKey: "a",
+      activityVersion: "1.0.0",
+      responses: [evidence.written("q1", "answer")]
+    }),
+    (error) => error.code === "AUTH_REQUIRED"
+  );
 });
 
 test("toApiResponse strips nested client mark fields from the payload", () => {
@@ -63,12 +117,14 @@ test("toApiResponse strips nested client mark fields from the payload", () => {
       awarded_score: 6,
       is_correct: true,
       awardedScore: 6,
-      isCorrect: true
+      isCorrect: true,
+      marking_source: "client"
     }
   });
   assert.deepEqual(payload.response_payload, { text: "learner answer" });
   assert.equal(JSON.stringify(payload).includes("awarded_score"), false);
   assert.equal(JSON.stringify(payload).includes("is_correct"), false);
+  assert.equal(JSON.stringify(payload).includes("marking_source"), false);
 });
 
 test("failed retries retain the client attempt ID and success clears it", async () => {

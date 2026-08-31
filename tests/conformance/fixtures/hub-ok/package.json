@@ -1,0 +1,10 @@
+{
+  "name": "fixture-hub-ok",
+  "private": true,
+  "scripts": {
+    "check:hub-security": "node ../../../../dist/hub-security.mjs"
+  },
+  "learningPlatform": {
+    "securityBaseline": "1.0"
+  }
+}

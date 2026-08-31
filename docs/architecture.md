@@ -37,6 +37,8 @@ The browser is an untrusted presentation and evidence-capture client.
 - Backend responses may include authoritative attempt number, score and progress, but the browser never sends those values as authority.
 - Progress is read from backend views. Local storage is not consulted by the progress service.
 
+Hubs must also satisfy [Hub Security Baseline v1](hub-security-baseline-v1.md).
+
 Pending onboarding is the sole profile-like temporary state owned by the package. It uses session storage, is scoped by hub code, excludes email and password, and is deleted after successful onboarding.
 
 ## Service layout
