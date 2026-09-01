@@ -58,7 +58,10 @@ export function createPlatform(options = {}, dependencies = {}) {
   const marking = createFormativeMarkingService({
     api,
     auth,
-    crypto: dependencies.crypto
+    crypto: dependencies.crypto,
+    resolveFormativeContract: options.resolveFormativeContract
+      || dependencies.resolveFormativeContract
+      || null
   });
   const features = createFeatureFlags(config.features);
   const curriculum = createPublishedCurriculumService({

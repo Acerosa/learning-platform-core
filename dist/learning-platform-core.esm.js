@@ -1101,6 +1101,42 @@ function createSubmissionService({
   });
 }
 
+// src/core/marking/formative-contract.js
+function requiredString2(value, code) {
+  const clean3 = typeof value === "string" ? value.trim() : "";
+  if (!clean3) throw new PlatformError({ code, category: "validation" });
+  return clean3;
+}
+function freezeResponses(responses) {
+  if (!Array.isArray(responses) || !responses.length) {
+    throw new PlatformError({ code: "RESPONSES_REQUIRED", category: "validation" });
+  }
+  return Object.freeze(responses.map((item2) => Object.freeze({ ...item2 })));
+}
+function identityFormativeContract(input = {}) {
+  return Object.freeze({
+    activityKey: requiredString2(input.activityKey, "ACTIVITY_KEY_REQUIRED"),
+    activityVersion: requiredString2(
+      resolveActivityVersion({ version: input.activityVersion }),
+      "ACTIVITY_VERSION_REQUIRED"
+    ),
+    responses: freezeResponses(input.responses)
+  });
+}
+async function applyFormativeContract(resolver, input = {}) {
+  const base = identityFormativeContract(input);
+  if (typeof resolver !== "function") return base;
+  const resolved = await resolver({
+    activityKey: base.activityKey,
+    activityVersion: base.activityVersion,
+    responses: base.responses
+  });
+  if (!resolved || typeof resolved !== "object" || Array.isArray(resolved)) {
+    throw new PlatformError({ code: "INVALID_FORMATIVE_CONTRACT", category: "configuration" });
+  }
+  return identityFormativeContract(resolved);
+}
+
 // src/core/marking/formative-marking-service.js
 var CHECK_FAILED_MESSAGE = "Your answer could not be checked. Please try again.";
 var RETRY_LIMIT_MESSAGE = "You have used all allowed checks for this question.";
@@ -1147,7 +1183,7 @@ function assertAllowedMarkInput(input) {
     }
   });
 }
-function requiredString2(value, code) {
+function requiredString3(value, code) {
   const clean3 = typeof value === "string" ? value.trim() : "";
   if (!clean3) throw new PlatformError({ code, category: "validation" });
   return clean3;
@@ -1311,7 +1347,8 @@ function aggregateRows(rows, block) {
 function createFormativeMarkingService({
   api,
   auth = null,
-  crypto = globalThis.crypto
+  crypto = globalThis.crypto,
+  resolveFormativeContract = null
 } = {}) {
   let pendingCheck = null;
   function requireSignedIn() {
@@ -1325,7 +1362,7 @@ function createFormativeMarkingService({
   }
   function resolveClientCheckId(key, supplied) {
     if (supplied) {
-      const id2 = requiredString2(supplied, "INVALID_CLIENT_CHECK_ID");
+      const id2 = requiredString3(supplied, "INVALID_CLIENT_CHECK_ID");
       pendingCheck = { key, clientCheckId: id2 };
       return id2;
     }
@@ -1338,8 +1375,8 @@ function createFormativeMarkingService({
     requireSignedIn();
     assertAllowedMarkInput(input);
     assertNoForbiddenInput(input);
-    const activityKey = requiredString2(input.activityKey, "ACTIVITY_KEY_REQUIRED");
-    const activityVersion = requiredString2(
+    const activityKey = requiredString3(input.activityKey, "ACTIVITY_KEY_REQUIRED");
+    const activityVersion = requiredString3(
       resolveActivityVersion({ version: input.activityVersion }),
       "ACTIVITY_VERSION_REQUIRED"
     );
@@ -1348,13 +1385,18 @@ function createFormativeMarkingService({
     if (!items.length) {
       throw new PlatformError({ code: "RESPONSES_REQUIRED", category: "validation" });
     }
-    const key = payloadKey(activityKey, activityVersion, items);
+    const canonical = await applyFormativeContract(resolveFormativeContract, {
+      activityKey,
+      activityVersion,
+      responses: items
+    });
+    const key = payloadKey(canonical.activityKey, canonical.activityVersion, canonical.responses);
     const clientCheckId = resolveClientCheckId(key, input.clientCheckId);
     try {
       const data = await api.markFormativeResponse({
-        p_activity_key: activityKey,
-        p_activity_version: activityVersion,
-        p_responses: Object.freeze(items),
+        p_activity_key: canonical.activityKey,
+        p_activity_version: canonical.activityVersion,
+        p_responses: canonical.responses,
         p_client_check_id: clientCheckId,
         p_source_page: sourcePath2(input.sourcePage)
       });
@@ -1910,7 +1952,8 @@ function createPlatform(options = {}, dependencies = {}) {
   const marking = createFormativeMarkingService({
     api,
     auth,
-    crypto: dependencies.crypto
+    crypto: dependencies.crypto,
+    resolveFormativeContract: options.resolveFormativeContract || dependencies.resolveFormativeContract || null
   });
   const features = createFeatureFlags(config.features);
   const curriculum = createPublishedCurriculumService({
