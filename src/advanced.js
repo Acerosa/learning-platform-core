@@ -17,6 +17,7 @@ export { createEnrolmentService } from "./core/enrolment/enrolment-service.js";
 export { createAssignmentService } from "./core/assignment/assignment-service.js";
 export { createProgressService } from "./core/progress/progress-service.js";
 export { createSubmissionService, assertSecureSubmission } from "./core/submission/submission-service.js";
+export { createFormativeMarkingService } from "./core/marking/formative-marking-service.js";
 export { toApiResponse } from "./core/evidence/evidence.js";
 export { createPlatformState, derivePlatformState } from "./core/state/platform-state.js";
 export { mapPlatformError } from "./core/errors/platform-error.js";

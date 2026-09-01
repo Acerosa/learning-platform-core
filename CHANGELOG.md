@@ -4,10 +4,16 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## [Unreleased]
 
+## 0.2.4 - 2026-09-01
+
+### Added
+
+- Server-marked formative feedback via `createFormativeMarkingService` / `platform.marking.markBlock`.
+  Lost or failed check retries reuse the same `clientCheckId`; a changed response or a completed check starts a new one.
+
 ### Security
 
-- Nested client mark and identity fields are not accepted as authority on evidence payloads. The backend remains the scoring authority.
-- Hub Security Baseline v1.0: hubs pin the shared contract and run the Node scanner (`@learning-platform/core/hub-security`). High-level guarantees are in `docs/hub-security-baseline-v1.md`.
+- Immediate formative feedback and practice scores are server-marked. Formative checks are analytics records, not official assessment attempts.
 
 ## 0.2.3 - 2026-08-31
 
