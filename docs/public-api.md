@@ -147,7 +147,7 @@ Security: never put tokens, passwords or raw backend objects in `detail`.
 
 - `initialise()` → restored auth-state snapshot.
 - `signIn(email, password)` → authenticated state snapshot.
-- `signUp(email, password)` → `{ user, session, needsConfirmation }` from Supabase Auth.
+- `signUp(email, password)` → `{ user, session, needsConfirmation }` from Supabase Auth. Email confirmation links redirect to the current hub root via `options.emailRedirectTo` (derived from `hubRootPath`, not the Supabase project Site URL).
 - `signOut()` → `true` after local state is cleared.
 - `subscribe(listener)` → unsubscribe function.
 - `getState()` → current auth snapshot.

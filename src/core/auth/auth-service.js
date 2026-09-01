@@ -1,6 +1,7 @@
 import { mapPlatformError, PlatformError } from "../errors/platform-error.js";
+import { cleanAuthCallbackFromUrl } from "./auth-redirect-url.js";
 
-export function createAuthService({ client, logger } = {}) {
+export function createAuthService({ client, logger, resolveRedirectUrl, cleanAuthCallback } = {}) {
   if (!client?.auth) {
     throw new PlatformError({ code: "SUPABASE_AUTH_REQUIRED", category: "configuration" });
   }
@@ -34,6 +35,14 @@ export function createAuthService({ client, logger } = {}) {
       .then((result) => {
         if (result.error) throw result.error;
         const session = result.data?.session || null;
+        if (session) {
+          try {
+            if (typeof cleanAuthCallback === "function") cleanAuthCallback();
+            else cleanAuthCallbackFromUrl(globalThis.location, globalThis.history);
+          } catch (error) {
+            logger?.warn("auth.callback-url.cleanup.failed", { code: error?.code });
+          }
+        }
         return publish({ status: session ? "authenticated" : "signed-out", session, error: null });
       })
       .catch((error) => {
@@ -61,7 +70,12 @@ export function createAuthService({ client, logger } = {}) {
   async function signUp(email, password) {
     publish({ status: "signing-in", error: null });
     try {
-      const result = await client.auth.signUp({ email: String(email || "").trim(), password });
+      const payload = { email: String(email || "").trim(), password };
+      const emailRedirectTo = typeof resolveRedirectUrl === "function" ? resolveRedirectUrl() : null;
+      if (emailRedirectTo) {
+        payload.options = { emailRedirectTo };
+      }
+      const result = await client.auth.signUp(payload);
       if (result.error) throw result.error;
       const session = result.data?.session || null;
       publish({ status: session ? "authenticated" : "signed-out", session, error: null });

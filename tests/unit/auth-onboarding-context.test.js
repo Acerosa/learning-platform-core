@@ -17,12 +17,16 @@ test("auth restores a Supabase-managed session and publishes state", async () =>
 
 test("sign up reports the email-confirmation boundary without storing credentials", async () => {
   const client = fakeSupabase({ session: null });
-  const auth = createAuthService({ client });
+  const auth = createAuthService({
+    client,
+    resolveRedirectUrl: () => "https://hub.example/"
+  });
   const result = await auth.signUp("learner@example.test", "password-123");
   assert.equal(result.needsConfirmation, true);
   assert.deepEqual(client.calls.find((call) => call.type === "sign-up").credentials, {
     email: "learner@example.test",
-    password: "password-123"
+    password: "password-123",
+    options: { emailRedirectTo: "https://hub.example/" }
   });
 });
 

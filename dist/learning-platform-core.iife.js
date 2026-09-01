@@ -249,6 +249,8 @@ var LearningPlatformCore = (() => {
       platformVersion: cleanString(options.platformVersion) || "0.1",
       apiSchema: "api",
       accountPath: cleanString(options.accountPath) || "./account/",
+      /** Relative path from the current page to the hub root (e.g. "./", "../"). Used for auth email redirects. */
+      hubRootPath: cleanString(options.hubRootPath) || "./",
       navigationMode,
       navigation: navigationFrom(options.navigation, navigationMode),
       features: Object.freeze({ ...options.features || {} }),
@@ -472,8 +474,66 @@ var LearningPlatformCore = (() => {
     });
   }
 
+  // src/core/auth/auth-redirect-url.js
+  var ALLOWED_PROTOCOLS = /* @__PURE__ */ new Set(["http:", "https:"]);
+  var AUTH_HASH_KEYS = /* @__PURE__ */ new Set([
+    "access_token",
+    "refresh_token",
+    "expires_in",
+    "expires_at",
+    "token_type",
+    "type",
+    "provider_token",
+    "provider_refresh_token"
+  ]);
+  function cleanRelativeRoot(value) {
+    const root = typeof value === "string" ? value.trim() : "";
+    if (!root) return "./";
+    if (/^[a-z]+:/i.test(root) || root.startsWith("//") || root.includes("?") || root.includes("#")) {
+      throw new PlatformError({ code: "INVALID_AUTH_REDIRECT", category: "configuration" });
+    }
+    return root.endsWith("/") ? root : `${root}/`;
+  }
+  function canonicalSameOriginUrl(origin, pathname) {
+    const path = pathname.startsWith("/") ? pathname : `/${pathname}`;
+    const withSlash = path.endsWith("/") ? path : `${path}/`;
+    return `${origin}${withSlash}`;
+  }
+  function resolveAuthRedirectUrl({ location, hubRootPath = "./" } = {}) {
+    if (!location || typeof location.href !== "string") return null;
+    if (!ALLOWED_PROTOCOLS.has(location.protocol)) {
+      throw new PlatformError({ code: "INVALID_AUTH_REDIRECT", category: "configuration" });
+    }
+    const origin = location.origin;
+    const relativeRoot = cleanRelativeRoot(hubRootPath);
+    const basePathname = location.pathname || "/";
+    const baseHref = `${origin}${basePathname.endsWith("/") ? basePathname : `${basePathname}/`}`;
+    let resolved;
+    try {
+      resolved = new URL(relativeRoot, baseHref);
+    } catch {
+      throw new PlatformError({ code: "INVALID_AUTH_REDIRECT", category: "configuration" });
+    }
+    if (resolved.origin !== origin) {
+      throw new PlatformError({ code: "AUTH_REDIRECT_CROSS_ORIGIN", category: "configuration" });
+    }
+    return canonicalSameOriginUrl(origin, resolved.pathname);
+  }
+  function cleanAuthCallbackFromUrl(location, history) {
+    if (!location || typeof history?.replaceState !== "function") return false;
+    const rawHash = String(location.hash || "");
+    if (!rawHash.startsWith("#")) return false;
+    const params = new URLSearchParams(rawHash.slice(1));
+    const hasAuthMaterial = Array.from(params.keys()).some((key) => AUTH_HASH_KEYS.has(key));
+    if (!hasAuthMaterial) return false;
+    const pathname = location.pathname || "/";
+    const cleanPath = pathname.endsWith("/") ? pathname : `${pathname}/`;
+    history.replaceState(history.state, "", cleanPath);
+    return true;
+  }
+
   // src/core/auth/auth-service.js
-  function createAuthService({ client, logger } = {}) {
+  function createAuthService({ client, logger, resolveRedirectUrl, cleanAuthCallback } = {}) {
     if (!client?.auth) {
       throw new PlatformError({ code: "SUPABASE_AUTH_REQUIRED", category: "configuration" });
     }
@@ -504,6 +564,14 @@ var LearningPlatformCore = (() => {
       initialisePromise = client.auth.getSession().then((result2) => {
         if (result2.error) throw result2.error;
         const session = result2.data?.session || null;
+        if (session) {
+          try {
+            if (typeof cleanAuthCallback === "function") cleanAuthCallback();
+            else cleanAuthCallbackFromUrl(globalThis.location, globalThis.history);
+          } catch (error) {
+            logger?.warn("auth.callback-url.cleanup.failed", { code: error?.code });
+          }
+        }
         return publish({ status: session ? "authenticated" : "signed-out", session, error: null });
       }).catch((error) => {
         const mapped = mapPlatformError(error, { operation: "restore-session" });
@@ -529,7 +597,12 @@ var LearningPlatformCore = (() => {
     async function signUp(email, password) {
       publish({ status: "signing-in", error: null });
       try {
-        const result2 = await client.auth.signUp({ email: String(email || "").trim(), password });
+        const payload = { email: String(email || "").trim(), password };
+        const emailRedirectTo = typeof resolveRedirectUrl === "function" ? resolveRedirectUrl() : null;
+        if (emailRedirectTo) {
+          payload.options = { emailRedirectTo };
+        }
+        const result2 = await client.auth.signUp(payload);
         if (result2.error) throw result2.error;
         const session = result2.data?.session || null;
         publish({ status: session ? "authenticated" : "signed-out", session, error: null });
@@ -1885,7 +1958,16 @@ var LearningPlatformCore = (() => {
       createClient: dependencies.createClient
     });
     const api = createLearnerApi({ client, logger });
-    const auth = createAuthService({ client, logger });
+    const runtimeWindow = dependencies.window || globalThis.window;
+    const auth = createAuthService({
+      client,
+      logger,
+      resolveRedirectUrl: () => resolveAuthRedirectUrl({
+        location: runtimeWindow?.location,
+        hubRootPath: config.hubRootPath
+      }),
+      cleanAuthCallback: () => cleanAuthCallbackFromUrl(runtimeWindow?.location, runtimeWindow?.history)
+    });
     const session = createSessionService(auth);
     const profile = createProfileService(api);
     const enrolments = createEnrolmentService(api);
@@ -1954,7 +2036,6 @@ var LearningPlatformCore = (() => {
         state.transition("error", error);
       }
     }));
-    const runtimeWindow = dependencies.window || globalThis.window;
     const offline = () => state.transition("offline");
     const online = () => learner.refresh().catch((error) => state.transition("error", error));
     runtimeWindow?.addEventListener?.("offline", offline);

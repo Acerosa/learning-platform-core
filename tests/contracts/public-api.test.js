@@ -69,6 +69,7 @@ const STABLE_EXPORTS = Object.freeze([
 
 const ADVANCED_EXPORTS = Object.freeze([
   "assertSecureSubmission",
+  "cleanAuthCallbackFromUrl",
   "createAssignmentService",
   "createAuthService",
   "createEnrolmentService",
@@ -89,6 +90,7 @@ const ADVANCED_EXPORTS = Object.freeze([
   "derivePlatformState",
   "mapPlatformError",
   "redact",
+  "resolveAuthRedirectUrl",
   "toApiResponse"
 ].sort());
 

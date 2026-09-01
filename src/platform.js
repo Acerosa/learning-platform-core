@@ -5,6 +5,7 @@ import { createPlatformState } from "./core/state/platform-state.js";
 import { createSupabaseClient } from "./core/api/supabase-client.js";
 import { createLearnerApi } from "./core/api/learner-api.js";
 import { createAuthService } from "./core/auth/auth-service.js";
+import { cleanAuthCallbackFromUrl, resolveAuthRedirectUrl } from "./core/auth/auth-redirect-url.js";
 import { createSessionService } from "./core/session/session-service.js";
 import { createProfileService } from "./core/profile/profile-service.js";
 import { createEnrolmentService } from "./core/enrolment/enrolment-service.js";
@@ -25,7 +26,16 @@ export function createPlatform(options = {}, dependencies = {}) {
     createClient: dependencies.createClient
   });
   const api = createLearnerApi({ client, logger });
-  const auth = createAuthService({ client, logger });
+  const runtimeWindow = dependencies.window || globalThis.window;
+  const auth = createAuthService({
+    client,
+    logger,
+    resolveRedirectUrl: () => resolveAuthRedirectUrl({
+      location: runtimeWindow?.location,
+      hubRootPath: config.hubRootPath
+    }),
+    cleanAuthCallback: () => cleanAuthCallbackFromUrl(runtimeWindow?.location, runtimeWindow?.history)
+  });
   const session = createSessionService(auth);
   const profile = createProfileService(api);
   const enrolments = createEnrolmentService(api);
@@ -98,7 +108,6 @@ export function createPlatform(options = {}, dependencies = {}) {
     }
   }));
 
-  const runtimeWindow = dependencies.window || globalThis.window;
   const offline = () => state.transition("offline");
   const online = () => learner.refresh().catch((error) => state.transition("error", error));
   runtimeWindow?.addEventListener?.("offline", offline);
