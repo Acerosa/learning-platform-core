@@ -1,5 +1,6 @@
 import { PlatformError, mapPlatformError } from "../errors/platform-error.js";
 import { evidence, toApiResponse } from "../evidence/evidence.js";
+import { applyFormativeContract } from "./formative-contract.js";
 import {
   FORBIDDEN_SUBMISSION_FIELD,
   resolveActivityVersion
@@ -264,7 +265,8 @@ function aggregateRows(rows, block) {
 export function createFormativeMarkingService({
   api,
   auth = null,
-  crypto = globalThis.crypto
+  crypto = globalThis.crypto,
+  resolveFormativeContract = null
 } = {}) {
   let pendingCheck = null;
 
@@ -305,13 +307,18 @@ export function createFormativeMarkingService({
     if (!items.length) {
       throw new PlatformError({ code: "RESPONSES_REQUIRED", category: "validation" });
     }
-    const key = payloadKey(activityKey, activityVersion, items);
+    const canonical = await applyFormativeContract(resolveFormativeContract, {
+      activityKey,
+      activityVersion,
+      responses: items
+    });
+    const key = payloadKey(canonical.activityKey, canonical.activityVersion, canonical.responses);
     const clientCheckId = resolveClientCheckId(key, input.clientCheckId);
     try {
       const data = await api.markFormativeResponse({
-        p_activity_key: activityKey,
-        p_activity_version: activityVersion,
-        p_responses: Object.freeze(items),
+        p_activity_key: canonical.activityKey,
+        p_activity_version: canonical.activityVersion,
+        p_responses: canonical.responses,
         p_client_check_id: clientCheckId,
         p_source_page: sourcePath(input.sourcePage)
       });

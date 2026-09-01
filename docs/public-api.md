@@ -69,6 +69,10 @@ const config = {
 };
 ```
 
+Optional: `resolveFormativeContract` — async hub hook that canonicalises formative
+activity keys, versions and question IDs before `mark_formative_response` RPC
+payloads are built. Omit for identity passthrough.
+
 Required parameters: `hubCode` in kebab-case and a non-empty `hubName`.
 
 Return/normalisation: `platform.config` is immutable, fixes `apiSchema` to `api`, and records `navigationMode`. The default `navigationMode` is `"standard"`: all six standard navigation definitions are present, unused routes are disabled, and extra items are appended. `"as-supplied"` keeps the hub array order and does not inject unused standard routes. Routes without a path are disabled in `"standard"` mode and rejected in `"as-supplied"` mode.

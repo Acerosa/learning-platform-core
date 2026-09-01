@@ -4,6 +4,14 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## [Unreleased]
 
+## 0.2.6 - 2026-09-01
+
+### Fixed
+
+- Optional `resolveFormativeContract` on `createPlatform` lets hubs canonicalise
+  formative activity versions and question keys before `mark_formative_response`
+  payloads are built. Default behaviour remains identity passthrough.
+
 ## 0.2.5 - 2026-09-01
 
 ### Fixed
