@@ -9,6 +9,7 @@ export { createPlatformConfig } from "./core/config/platform-config.js";
 export { createSupabaseClient } from "./core/api/supabase-client.js";
 export { createLearnerApi } from "./core/api/learner-api.js";
 export { createAuthService } from "./core/auth/auth-service.js";
+export { cleanAuthCallbackFromUrl, resolveAuthRedirectUrl } from "./core/auth/auth-redirect-url.js";
 export { createSessionService } from "./core/session/session-service.js";
 export { createLearnerContext } from "./core/learner/learner-context.js";
 export { createOnboardingService } from "./core/onboarding/onboarding-service.js";

@@ -103,6 +103,8 @@ export function createPlatformConfig(options = {}) {
     platformVersion: cleanString(options.platformVersion) || "0.1",
     apiSchema: "api",
     accountPath: cleanString(options.accountPath) || "./account/",
+    /** Relative path from the current page to the hub root (e.g. "./", "../"). Used for auth email redirects. */
+    hubRootPath: cleanString(options.hubRootPath) || "./",
     navigationMode,
     navigation: navigationFrom(options.navigation, navigationMode),
     features: Object.freeze({ ...(options.features || {}) }),

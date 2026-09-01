@@ -4,6 +4,19 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## [Unreleased]
 
+## 0.2.5 - 2026-09-01
+
+### Fixed
+
+- Email confirmation redirects now return learners to the originating hub via
+  `options.emailRedirectTo`, derived from trusted `hubRootPath`, instead of the
+  Supabase project Site URL.
+
+### Security
+
+- Reject cross-origin and open-redirect style auth callback targets. Remove auth
+  token material from the address bar only after session recovery.
+
 ## 0.2.4 - 2026-09-01
 
 ### Added
