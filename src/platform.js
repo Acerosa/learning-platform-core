@@ -13,6 +13,7 @@ import { createProgressService } from "./core/progress/progress-service.js";
 import { createLearnerContext } from "./core/learner/learner-context.js";
 import { createOnboardingService } from "./core/onboarding/onboarding-service.js";
 import { createSubmissionService } from "./core/submission/submission-service.js";
+import { createFormativeMarkingService } from "./core/marking/formative-marking-service.js";
 import { createThemeService, applyBranding } from "./theme/theme.js";
 import { createPublishedCurriculumService } from "./curriculum-runtime/index.js";
 
@@ -42,6 +43,11 @@ export function createPlatform(options = {}, dependencies = {}) {
     api,
     auth,
     storage: dependencies.sessionStorage,
+    crypto: dependencies.crypto
+  });
+  const marking = createFormativeMarkingService({
+    api,
+    auth,
     crypto: dependencies.crypto
   });
   const features = createFeatureFlags(config.features);
@@ -124,6 +130,7 @@ export function createPlatform(options = {}, dependencies = {}) {
     assignments,
     progress,
     submission,
+    marking,
     curriculum,
     state,
     theme,

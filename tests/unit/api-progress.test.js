@@ -22,7 +22,7 @@ test("learner API selects only the approved api schema", async () => {
 
 test("learner API exposes profile, enrolment, assignment, delivery, attempts, responses and progress contracts", () => {
   const api = createLearnerApi({ client: fakeSupabase() });
-  for (const method of ["getProfile", "getEnrolments", "getAssignments", "getCurriculumDelivery", "getAttempts", "getResponses", "getProgress", "getRegistrationOptions", "completeOnboarding", "submitAttempt", "getPublishedCurriculum", "getPublishedCurriculumPackage"]) {
+  for (const method of ["getProfile", "getEnrolments", "getAssignments", "getCurriculumDelivery", "getAttempts", "getResponses", "getProgress", "getRegistrationOptions", "completeOnboarding", "submitAttempt", "markFormativeResponse", "getPublishedCurriculum", "getPublishedCurriculumPackage"]) {
     assert.equal(typeof api[method], "function", method);
   }
 });

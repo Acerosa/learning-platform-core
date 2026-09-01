@@ -382,6 +382,7 @@ function createLearnerApi({ client, schema = "api", logger } = {}) {
     getRegistrationOptions: () => rpc("registration_options"),
     completeOnboarding: (payload) => rpc("complete_learner_onboarding", payload),
     submitAttempt: (payload) => rpc("submit_attempt", payload),
+    markFormativeResponse: (payload) => rpc("mark_formative_response", payload),
     getPublishedCurriculum: () => rpc("published_curriculum"),
     getPublishedCurriculumPackage: (hubCode, courseKey, packageVersion) => rpc("published_curriculum_package", {
       p_hub_code: hubCode,
@@ -1027,6 +1028,295 @@ function createSubmissionService({
   });
 }
 
+// src/core/marking/formative-marking-service.js
+var CHECK_FAILED_MESSAGE = "Your answer could not be checked. Please try again.";
+var RETRY_LIMIT_MESSAGE = "You have used all allowed checks for this question.";
+var ALLOWED_MARK_INPUT = /* @__PURE__ */ new Set([
+  "activityKey",
+  "activityVersion",
+  "block",
+  "responses",
+  "clientCheckId",
+  "sourcePage"
+]);
+function generateCheckId(runtimeCrypto) {
+  if (typeof runtimeCrypto?.randomUUID === "function") return runtimeCrypto.randomUUID();
+  const bytes = new Uint8Array(16);
+  runtimeCrypto?.getRandomValues?.(bytes);
+  if (bytes.every((value) => value === 0)) {
+    for (let index = 0; index < bytes.length; index += 1) bytes[index] = Math.floor(Math.random() * 256);
+  }
+  bytes[6] = bytes[6] & 15 | 64;
+  bytes[8] = bytes[8] & 63 | 128;
+  const hex = Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+function sourcePath2(value) {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const raw = value.trim();
+  try {
+    return new URL(raw, "https://hub.invalid").pathname;
+  } catch {
+    return raw.split(/[?#]/, 1)[0] || null;
+  }
+}
+function assertAllowedMarkInput(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new PlatformError({ code: "INVALID_SUBMISSION", category: "validation" });
+  }
+  Object.keys(input).forEach((key) => {
+    if (!ALLOWED_MARK_INPUT.has(key)) {
+      throw new PlatformError({
+        code: "FORBIDDEN_SUBMISSION_FIELD",
+        category: "submission",
+        diagnostic: { field: key }
+      });
+    }
+  });
+}
+function requiredString2(value, code) {
+  const clean3 = typeof value === "string" ? value.trim() : "";
+  if (!clean3) throw new PlatformError({ code, category: "validation" });
+  return clean3;
+}
+function questionIdFor(block) {
+  return String(block?.content?.questionId || block?.id || "").trim();
+}
+function blockType(block) {
+  return String(block?.type || "").trim().toLowerCase().replace(/_/g, "-").replace(/\s+/g, "-");
+}
+function asObject(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+var MARKING_FIELD = /^(correctOptionId|correctCategoryId|correctValues|answerKey|markScheme|modelAnswer|correctOptions|correctOrder|spec)$/;
+function learnerSafeValue(value) {
+  if (Array.isArray(value)) return value.map(learnerSafeValue);
+  if (!value || typeof value !== "object") return value;
+  const next = {};
+  for (const [key, nested] of Object.entries(value)) {
+    if (MARKING_FIELD.test(key)) continue;
+    if (key === "correct" && nested && typeof nested === "object") continue;
+    next[key] = learnerSafeValue(nested);
+  }
+  return next;
+}
+function assertNoForbiddenInput(value) {
+  if (Array.isArray(value)) {
+    value.forEach(assertNoForbiddenInput);
+    return;
+  }
+  if (!value || typeof value !== "object") return;
+  for (const [key, nested] of Object.entries(value)) {
+    if (FORBIDDEN_SUBMISSION_FIELD.test(key)) {
+      throw new PlatformError({
+        code: "FORBIDDEN_SUBMISSION_FIELD",
+        category: "submission",
+        diagnostic: { field: key }
+      });
+    }
+    assertNoForbiddenInput(nested);
+  }
+}
+function evidenceItems(block, responses) {
+  const type = blockType(block);
+  const questionId = questionIdFor(block);
+  if (!questionId) {
+    throw new PlatformError({ code: "QUESTION_KEY_REQUIRED", category: "validation" });
+  }
+  if (type === "single-choice" || type === "option-cards") {
+    const optionId = typeof responses === "string" ? responses : asObject(responses).optionId;
+    return [evidence.singleChoice(questionId, optionId)];
+  }
+  if (type === "classification") {
+    const assignments = asObject(responses);
+    const items = Array.isArray(block?.content?.items) ? block.content.items : [];
+    if (!items.length) {
+      throw new PlatformError({ code: "RESPONSES_REQUIRED", category: "validation" });
+    }
+    return items.map((item2) => {
+      const itemId = String(item2?.id || "").trim();
+      if (!itemId) {
+        throw new PlatformError({ code: "QUESTION_KEY_REQUIRED", category: "validation" });
+      }
+      return evidence.classification(`${questionId}:${itemId}`, assignments[itemId], itemId);
+    });
+  }
+  if (type === "short-response") {
+    const text = typeof responses === "string" ? responses : asObject(responses).text;
+    return [evidence.written(questionId, text)];
+  }
+  if (type === "reflection") {
+    const text = typeof responses === "string" ? responses : asObject(responses).text;
+    return [evidence.reflection(questionId, text)];
+  }
+  if (type === "drag-drop") {
+    const placements = asObject(responses);
+    const items = Array.isArray(block?.content?.items) ? block.content.items : [];
+    return [evidence.matching(
+      questionId,
+      items.map((item2) => ({
+        left: String(item2?.id || "").trim(),
+        right: String(placements[item2?.id] || "").trim()
+      }))
+    )];
+  }
+  if (type === "ordering" || type === "sequence") {
+    const itemIds = Array.isArray(asObject(responses).itemIds) ? asObject(responses).itemIds : [];
+    return [evidence.ordering(questionId, itemIds)];
+  }
+  if (type === "fill-gap" || type === "phrase-completion") {
+    const placements = asObject(responses);
+    const gaps = Array.isArray(block?.content?.gaps) && block.content.gaps.length ? block.content.gaps : [{ id: "gap" }];
+    return gaps.map((gap) => {
+      const gapId = String(gap?.id || "").trim() || "gap";
+      return evidence.singleChoice(`${questionId}:${gapId}`, placements[gapId]);
+    });
+  }
+  throw new PlatformError({ code: "UNSUPPORTED_BLOCK_TYPE", category: "validation" });
+}
+function numeric(value) {
+  const amount = Number(value);
+  return Number.isFinite(amount) ? amount : 0;
+}
+function mapRow(row) {
+  const correctValue = row?.is_correct;
+  const review = Boolean(row?.requires_review);
+  const maxScore = numeric(row?.max_score);
+  const awardedScore = numeric(row?.awarded_score);
+  const correct = correctValue === true ? true : correctValue === false ? false : null;
+  const scored = !review && correct !== null && maxScore > 0;
+  const remaining = row?.remaining_attempts == null ? null : numeric(row.remaining_attempts);
+  return Object.freeze({
+    questionId: String(row?.question_id || ""),
+    awardedScore,
+    maxScore,
+    correct,
+    requiresReview: review,
+    markingSource: "server",
+    checkNumber: numeric(row?.check_number) || void 0,
+    remainingAttempts: remaining,
+    canRetry: row?.can_retry === false ? false : row?.can_retry === true ? true : void 0,
+    score: scored ? Object.freeze({ correct: awardedScore, total: maxScore }) : void 0
+  });
+}
+function itemIdFromQuestion(questionId, prefix) {
+  if (!prefix || !questionId.startsWith(`${prefix}:`)) return void 0;
+  return questionId.slice(prefix.length + 1);
+}
+function aggregateRows(rows, block) {
+  const mapped = rows.map(mapRow);
+  const requiresReview = mapped.some((item2) => item2.requiresReview);
+  const scored = mapped.filter((item2) => item2.score);
+  const allCorrect = mapped.length > 0 && mapped.every((item2) => item2.correct === true);
+  const anyIncorrect = mapped.some((item2) => item2.correct === false);
+  const correct = requiresReview ? null : allCorrect ? true : anyIncorrect ? false : null;
+  const score = scored.length ? Object.freeze({
+    correct: scored.reduce((total, item2) => total + item2.score.correct, 0),
+    total: scored.reduce((total, item2) => total + item2.score.total, 0)
+  }) : void 0;
+  const status = requiresReview ? "review" : correct === true ? "correct" : correct === false ? "incorrect" : "recorded";
+  const prefix = questionIdFor(block);
+  const remainingValues = mapped.map((item2) => item2.remainingAttempts).filter((value) => value != null);
+  const remainingAttempts = mapped.some((item2) => item2.remainingAttempts == null) ? null : remainingValues.length ? Math.min(...remainingValues) : void 0;
+  return Object.freeze({
+    completed: true,
+    correct,
+    requiresReview,
+    score,
+    status,
+    remainingAttempts,
+    canRetry: mapped.length > 0 && mapped.every((item2) => item2.canRetry !== false),
+    checkNumber: mapped.reduce((highest, item2) => Math.max(highest, item2.checkNumber || 0), 0) || void 0,
+    itemResults: Object.freeze(mapped.map((item2) => Object.freeze({
+      questionId: item2.questionId,
+      itemId: itemIdFromQuestion(item2.questionId, prefix),
+      correct: item2.correct,
+      requiresReview: item2.requiresReview
+    })))
+  });
+}
+function createFormativeMarkingService({
+  api,
+  auth = null,
+  crypto = globalThis.crypto
+} = {}) {
+  let pendingCheck = null;
+  function requireSignedIn() {
+    if (!auth || typeof auth.isSignedIn !== "function") return;
+    if (auth.isSignedIn() !== true) {
+      throw new PlatformError({ code: "AUTH_REQUIRED", category: "authentication" });
+    }
+  }
+  function payloadKey(activityKey, activityVersion, items) {
+    return JSON.stringify({ activityKey, activityVersion, items });
+  }
+  function resolveClientCheckId(key, supplied) {
+    if (supplied) {
+      const id2 = requiredString2(supplied, "INVALID_CLIENT_CHECK_ID");
+      pendingCheck = { key, clientCheckId: id2 };
+      return id2;
+    }
+    if (pendingCheck && pendingCheck.key === key) return pendingCheck.clientCheckId;
+    const id = generateCheckId(crypto);
+    pendingCheck = { key, clientCheckId: id };
+    return id;
+  }
+  async function markBlock(input = {}) {
+    requireSignedIn();
+    assertAllowedMarkInput(input);
+    assertNoForbiddenInput(input);
+    const activityKey = requiredString2(input.activityKey, "ACTIVITY_KEY_REQUIRED");
+    const activityVersion = requiredString2(
+      resolveActivityVersion({ version: input.activityVersion }),
+      "ACTIVITY_VERSION_REQUIRED"
+    );
+    const block = learnerSafeValue(input.block);
+    const items = evidenceItems(block, input.responses).map(toApiResponse);
+    if (!items.length) {
+      throw new PlatformError({ code: "RESPONSES_REQUIRED", category: "validation" });
+    }
+    const key = payloadKey(activityKey, activityVersion, items);
+    const clientCheckId = resolveClientCheckId(key, input.clientCheckId);
+    try {
+      const data = await api.markFormativeResponse({
+        p_activity_key: activityKey,
+        p_activity_version: activityVersion,
+        p_responses: Object.freeze(items),
+        p_client_check_id: clientCheckId,
+        p_source_page: sourcePath2(input.sourcePage)
+      });
+      const rows = Array.isArray(data) ? data : data ? [data] : [];
+      if (!rows.length) {
+        throw new PlatformError({
+          code: "MARK_FAILED",
+          category: "platform",
+          learnerMessage: CHECK_FAILED_MESSAGE
+        });
+      }
+      pendingCheck = null;
+      return aggregateRows(rows, block);
+    } catch (error) {
+      if (error instanceof PlatformError && error.category === "authentication") throw error;
+      const code = String(error?.code || error?.message || "");
+      if (/FORMATIVE_RETRY_LIMIT/i.test(code)) {
+        throw mapPlatformError(error, {
+          operation: "mark-formative-response",
+          code: "FORMATIVE_RETRY_LIMIT",
+          category: "validation",
+          learnerMessage: RETRY_LIMIT_MESSAGE
+        });
+      }
+      throw mapPlatformError(error, {
+        operation: "mark-formative-response",
+        learnerMessage: CHECK_FAILED_MESSAGE
+      });
+    }
+  }
+  return Object.freeze({
+    markBlock
+  });
+}
+
 // src/theme/theme.js
 var THEME_MODES = Object.freeze(["light", "dark", "system"]);
 var THEME_EVENT = "learningplatform:themechange";
@@ -1535,6 +1825,11 @@ function createPlatform(options = {}, dependencies = {}) {
     storage: dependencies.sessionStorage,
     crypto: dependencies.crypto
   });
+  const marking = createFormativeMarkingService({
+    api,
+    auth,
+    crypto: dependencies.crypto
+  });
   const features = createFeatureFlags(config.features);
   const curriculum = createPublishedCurriculumService({
     hubCode: config.hubCode,
@@ -1608,6 +1903,7 @@ function createPlatform(options = {}, dependencies = {}) {
     assignments,
     progress,
     submission,
+    marking,
     curriculum,
     state,
     theme,

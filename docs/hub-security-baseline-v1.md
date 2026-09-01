@@ -17,6 +17,7 @@ Hubs that pin this baseline:
 - authored teaching HTML is rendered through the shared refuse-list renderer
 - activity versions used for submission come from published catalogue metadata
 - learner bundles exclude authoritative marking data
+- immediate formative feedback and practice scores are server-marked
 
 ## Adoption
 
