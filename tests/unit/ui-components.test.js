@@ -226,6 +226,22 @@ test("session sections use kind variants and week view hides independent study w
   assert.equal(week.querySelector(".lp-progress-card"), null);
 });
 
+test("week view does not mount sessions marked inaccessible", () => {
+  const runtime = dom();
+  const { document } = runtime.window;
+  const week = createWeekView({
+    document,
+    week: { id: "week-1", teachingWeek: 1, title: "Variables", status: "available" },
+    sessions: [
+      { id: "open", title: "Lesson 1", kind: "session", accessible: true, activities: [{ title: "Starter", href: "./a/" }] },
+      { id: "closed", title: "Lesson 2 secret", kind: "session", accessible: false, activities: [{ title: "Hidden activity", href: "./secret/" }] }
+    ]
+  });
+  assert.equal(week.querySelector("#open"), week.querySelector("details"));
+  assert.equal(week.querySelector("#closed"), null);
+  assert.doesNotMatch(week.textContent, /Lesson 2 secret|Hidden activity/);
+});
+
 test("week view can host supplied activity nodes and exam context without hub branches", () => {
   const runtime = dom();
   const { document } = runtime.window;

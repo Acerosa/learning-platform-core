@@ -98,42 +98,62 @@ A future hub should only need configuration equivalent to
 `createHub({ hubCode, courseKey, theme })`. Publication loading is automatic
 once `courseKey` is set on `createPlatform`.
 
-## Week visibility
+## Week and session visibility
 
-Published curriculum weeks expose learner access through
-`week.metadata.status`. The canonical values are `planned`, `available` and
-`archived`.
+Published curriculum weeks and sessions expose learner access through
+`metadata.status`. The canonical values at both levels are `planned`,
+`available` and `archived`.
 
 | Status | Learner access |
 | --- | --- |
-| `available` | Accessible |
+| `available` | Accessible at that level |
 | `planned` | Not accessible |
 | `archived` | Not accessible |
 | missing / unknown | Not accessible |
 
-Hubs must not infer access from week number, position, publication version or
-bundled configuration. Evaluate each week independently; non-sequential
-availability is valid (for example week 1 and week 3 available while week 2
-is planned).
+A session is learner-accessible only when **both** the parent week and the
+session are available:
+
+```text
+session accessible
+  = week is available
+    AND session is available
+```
+
+An available session inside a planned or archived week stays closed. Hubs must
+not infer access from week number, position, publication version or bundled
+configuration. Evaluate each week independently; non-sequential availability is
+valid (for example week 1 and week 3 available while week 2 is planned). The
+same applies to sessions inside an available week.
 
 ```js
 import {
+  isSessionAccessible,
+  isSessionAvailable,
   isWeekAvailable,
   overlayLiveWeekMetadata,
+  sessionsFromPublication,
   weeksFromPublication
 } from "@learning-platform/core/curriculum-runtime";
 
 const open = isWeekAvailable(week.metadata?.status);
+const sessionOpen = isSessionAccessible(week.metadata?.status, session.metadata?.status);
 const runtimePackage = overlayLiveWeekMetadata(bundledPackage, livePackage);
 const weeks = weeksFromPublication(bundledPackage, livePackage);
+const sessions = sessionsFromPublication(bundledPackage, livePackage);
 ```
 
-`overlayLiveWeekMetadata` keeps bundled week structure and learner content while
-overlaying authoritative live publication metadata. When a live or cached
-publication is present, its `metadata.status` and `metadata.weekCommencing`
-win over bundled fallback values. This supports the existing resolver order
-(live publication → cached publication → bundled fallback) without replacing
-hub-specific rendering models.
+`overlayLiveWeekMetadata` (also exported as `overlayLivePackageMetadata`) keeps
+bundled week and session structure and learner content while overlaying
+authoritative live publication metadata. When a live or cached publication is
+present, week `metadata.status` and `metadata.weekCommencing` and session
+`metadata.status` win over bundled fallback values. Session relationships,
+activities, IDs and versions are not replaced. This supports the existing
+resolver order (live publication → cached publication → bundled fallback)
+without replacing hub-specific rendering models.
+
+`isSessionAvailable` uses the same conservative semantics as `isWeekAvailable`.
+`isSessionAccessible(weekStatus, sessionStatus)` composes both helpers.
 
 The nested package also exports `createCacheManager`, `createPublicationResolver`,
 `createCurriculumValidator` and `createRuntimeSchemaLoader` for tests. Hub
