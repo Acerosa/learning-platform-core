@@ -17,7 +17,14 @@ export {
   resolvePublicationState
 } from "./published-curriculum-service.js";
 export {
+  isSessionAccessible,
+  isSessionAvailable,
   isWeekAvailable,
+  overlayLivePackageMetadata,
+  overlayLiveSessionMetadata,
   overlayLiveWeekMetadata,
+  sessionsFromPublication,
+  SESSION_NOT_RELEASED_COPY,
+  POST_WEEK_BEFORE_SESSIONS_COPY,
   weeksFromPublication
 } from "./week-visibility.js";

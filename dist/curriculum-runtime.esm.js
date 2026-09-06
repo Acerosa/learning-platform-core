@@ -393,14 +393,25 @@ function createPublishedCurriculumService(options = {}) {
 }
 
 // src/curriculum-runtime/week-visibility.js
-function isWeekAvailable(status) {
+var SESSION_NOT_RELEASED_COPY = "Not released yet";
+var POST_WEEK_BEFORE_SESSIONS_COPY = "Post the week before releasing individual sessions.";
+function isAvailableStatus(status) {
   return String(status ?? "").trim().toLowerCase() === "available";
+}
+function isWeekAvailable(status) {
+  return isAvailableStatus(status);
+}
+function isSessionAvailable(status) {
+  return isAvailableStatus(status);
+}
+function isSessionAccessible(weekStatus, sessionStatus) {
+  return isWeekAvailable(weekStatus) && isSessionAvailable(sessionStatus);
 }
 function teachingWeekNumber(week) {
   const n = Number(week?.metadata?.teachingWeek);
   return Number.isFinite(n) && n > 0 ? n : null;
 }
-function overlayLiveWeekMetadata(base, live) {
+function overlayLiveWeekMetadataOnly(base, live) {
   if (!base || typeof base !== "object") return base;
   if (!live?.weeks?.length) return base;
   const liveById = /* @__PURE__ */ new Map();
@@ -428,8 +439,44 @@ function overlayLiveWeekMetadata(base, live) {
     })
   };
 }
+function overlayLiveSessionMetadata(base, live) {
+  if (!base || typeof base !== "object") return base;
+  if (!live?.sessions?.length) return base;
+  const liveById = /* @__PURE__ */ new Map();
+  for (const session of live.sessions) {
+    if (session?.id) liveById.set(session.id, session.metadata);
+  }
+  return {
+    ...base,
+    sessions: (base.sessions || []).map((session) => {
+      const liveMeta = session?.id ? liveById.get(session.id) : void 0;
+      if (!liveMeta) return session;
+      const liveStatus = liveMeta.status == null ? "" : String(liveMeta.status).trim();
+      return {
+        ...session,
+        metadata: {
+          ...session.metadata,
+          status: liveStatus || session.metadata?.status
+        }
+      };
+    })
+  };
+}
+function overlayLivePackageMetadata(base, live) {
+  if (!base || typeof base !== "object") return base;
+  const hasLiveWeeks = Boolean(live?.weeks?.length);
+  const hasLiveSessions = Boolean(live?.sessions?.length);
+  if (!hasLiveWeeks && !hasLiveSessions) return base;
+  let next = base;
+  if (hasLiveWeeks) next = overlayLiveWeekMetadataOnly(next, live);
+  if (hasLiveSessions) next = overlayLiveSessionMetadata(next, live);
+  return next;
+}
+function overlayLiveWeekMetadata(base, live) {
+  return overlayLivePackageMetadata(base, live);
+}
 function weeksFromPublication(basePackage, livePackage) {
-  const pkg = livePackage?.weeks?.length ? overlayLiveWeekMetadata(basePackage, livePackage) : basePackage;
+  const pkg = livePackage?.weeks?.length ? overlayLivePackageMetadata(basePackage, livePackage) : basePackage;
   if (!pkg?.weeks?.length) return [];
   return [...pkg.weeks].map((week) => {
     const teachingWeek = Number(week.metadata?.teachingWeek || 0);
@@ -443,11 +490,33 @@ function weeksFromPublication(basePackage, livePackage) {
     };
   }).filter((week) => week.id && week.teachingWeek > 0).sort((left, right) => left.teachingWeek - right.teachingWeek);
 }
+function sessionWeekId(session) {
+  const rel = session?.relationships;
+  if (!rel || typeof rel !== "object") return "";
+  return String(rel.week || "");
+}
+function sessionsFromPublication(basePackage, livePackage) {
+  const pkg = livePackage?.weeks?.length || livePackage?.sessions?.length ? overlayLivePackageMetadata(basePackage, livePackage) : basePackage;
+  if (!pkg?.sessions?.length) return [];
+  return [...pkg.sessions].filter((session) => session?.id).map((session) => {
+    const status = String(session.metadata?.status ?? "").trim();
+    return {
+      id: session.id,
+      title: session.metadata?.title || session.id,
+      status,
+      available: isSessionAvailable(status),
+      weekId: sessionWeekId(session),
+      kind: session.metadata?.kind ? String(session.metadata.kind) : void 0
+    };
+  });
+}
 export {
   CURRICULUM_CACHE_PREFIX,
   LEARNER_COPY,
   LEARNER_LABELS,
+  POST_WEEK_BEFORE_SESSIONS_COPY,
   PUBLICATION_STATES,
+  SESSION_NOT_RELEASED_COPY,
   SUPPORTED_PACKAGE_VERSION,
   SUPPORTED_SCHEMA_VERSION,
   compareSemver,
@@ -457,10 +526,15 @@ export {
   createPublishedCurriculumService,
   createRuntimeSchemaLoader,
   curriculumCacheKey,
+  isSessionAccessible,
+  isSessionAvailable,
   isWeekAvailable,
+  overlayLivePackageMetadata,
+  overlayLiveSessionMetadata,
   overlayLiveWeekMetadata,
   renderPublicationStatus,
   resolvePublicationState,
+  sessionsFromPublication,
   weeksFromPublication
 };
 //# sourceMappingURL=curriculum-runtime.esm.js.map

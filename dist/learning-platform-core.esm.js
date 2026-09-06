@@ -3096,6 +3096,7 @@ function createWeekView({
     }));
   }
   const visibleSessions = sessions.filter((session) => {
+    if (session.accessible === false) return false;
     if (ui.showIndependentStudy === false && isIndependentKind(session.kind)) return false;
     return true;
   });

@@ -4,6 +4,17 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## [Unreleased]
 
+## 0.2.7 - 2026-09-06
+
+### Added
+
+- Session visibility helpers in `@learning-platform/core/curriculum-runtime`:
+  `isSessionAvailable`, `isSessionAccessible`, `overlayLiveSessionMetadata`,
+  `overlayLivePackageMetadata` and `sessionsFromPublication`. Live session
+  `metadata.status` overlays bundled packages without replacing structure.
+  A session is learner-accessible only when the parent week and the session
+  are both `available`.
+
 ## 0.2.6 - 2026-09-01
 
 ### Fixed
