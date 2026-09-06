@@ -4,6 +4,8 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## [Unreleased]
 
+## 0.2.7 - 2026-09-06
+
 ### Added
 
 - Session visibility helpers in `@learning-platform/core/curriculum-runtime`:
