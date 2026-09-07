@@ -1,6 +1,7 @@
 import { PlatformError, mapPlatformError } from "../errors/platform-error.js";
 
 const SAFE_PENDING_FIELDS = Object.freeze(["firstName", "surname", "studentNumber", "registrationKey"]);
+const EMAIL_PATTERN = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
 function clean(value) {
   return typeof value === "string" ? value.trim() : "";
@@ -18,12 +19,18 @@ function validateProfile(details = {}) {
   return { ok: true, value };
 }
 
+function validateEmail(email) {
+  const value = clean(email);
+  if (!EMAIL_PATTERN.test(value)) return { ok: false, code: "INVALID_EMAIL" };
+  return { ok: true, value };
+}
+
 function validateAccount(details = {}) {
-  const email = clean(details.email);
+  const emailCheck = validateEmail(details.email);
+  if (!emailCheck.ok) return emailCheck;
   const password = typeof details.password === "string" ? details.password : "";
-  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return { ok: false, code: "INVALID_EMAIL" };
   if (password.length < 8) return { ok: false, code: "WEAK_PASSWORD" };
-  return { ok: true, value: { email, password } };
+  return { ok: true, value: { email: emailCheck.value, password } };
 }
 
 export function createOnboardingService({ api, authService, learnerContext, storage = globalThis.sessionStorage, pendingKey = "learning-platform.pending-onboarding.v1" } = {}) {
@@ -101,6 +108,7 @@ export function createOnboardingService({ api, authService, learnerContext, stor
   return Object.freeze({
     validateProfile,
     validateAccount,
+    validateEmail,
     savePending,
     getPending,
     clearPending,

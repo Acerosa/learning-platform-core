@@ -19,8 +19,17 @@ var DEFAULT_MESSAGES = Object.freeze({
   platform: "The learner service could not complete that request. Try again shortly.",
   unexpected: "Something went wrong. Try again or contact your tutor."
 });
+var CODE_MESSAGES = Object.freeze({
+  invalid_credentials: "Email or password is incorrect.",
+  email_not_confirmed: "Confirm your email before signing in.",
+  over_email_send_rate_limit: "Too many account emails have been requested. Please wait a few minutes and try again."
+});
+var OPERATION_MESSAGES = Object.freeze({
+  "sign-in": "We couldn't sign you in. Please try again.",
+  "sign-up": "We couldn't create your account. Please try again."
+});
 var CODE_RULES = Object.freeze([
-  [/AUTH|CREDENTIAL|SESSION|EMAIL_NOT_CONFIRMED/i, "authentication"],
+  [/AUTH|CREDENTIAL|SESSION|EMAIL_NOT_CONFIRMED|RATE_LIMIT/i, "authentication"],
   [/PERMISSION|FORBIDDEN|RLS|42501/i, "authorisation"],
   [/INVALID|VALIDATION|REQUIRED|MISMATCH/i, "validation"],
   [/NETWORK|FETCH|TIMEOUT|ABORT|OFFLINE/i, "network"],
@@ -58,14 +67,18 @@ function categoryFor(code, error) {
   const match = CODE_RULES.find(([pattern]) => pattern.test(code));
   return match ? match[1] : "platform";
 }
+function messageForCode(code) {
+  return CODE_MESSAGES[String(code || "").toLowerCase()] || null;
+}
 function mapPlatformError(error, overrides = {}) {
   if (error instanceof PlatformError && Object.keys(overrides).length === 0) return error;
   const sourceCode = String(overrides.code || error?.code || error?.name || "PLATFORM_ERROR");
   const category = overrides.category || categoryFor(sourceCode, error);
+  const learnerMessage = overrides.learnerMessage || messageForCode(sourceCode) || OPERATION_MESSAGES[overrides.operation] || DEFAULT_MESSAGES[category];
   return new PlatformError({
     code: sourceCode,
     category,
-    learnerMessage: overrides.learnerMessage || DEFAULT_MESSAGES[category],
+    learnerMessage,
     diagnostic: {
       operation: overrides.operation || null,
       status: Number.isFinite(error?.status) ? error.status : null,
@@ -540,6 +553,7 @@ function createLearnerContext({ authService, profileService, enrolmentService } 
 
 // src/core/onboarding/onboarding-service.js
 var SAFE_PENDING_FIELDS = Object.freeze(["firstName", "surname", "studentNumber", "registrationKey"]);
+var EMAIL_PATTERN = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 function clean2(value) {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -554,12 +568,17 @@ function validateProfile(details = {}) {
   if (!value.studentNumber || value.studentNumber.length > 100) return { ok: false, code: "INVALID_STUDENT_NUMBER" };
   return { ok: true, value };
 }
+function validateEmail(email) {
+  const value = clean2(email);
+  if (!EMAIL_PATTERN.test(value)) return { ok: false, code: "INVALID_EMAIL" };
+  return { ok: true, value };
+}
 function validateAccount(details = {}) {
-  const email = clean2(details.email);
+  const emailCheck = validateEmail(details.email);
+  if (!emailCheck.ok) return emailCheck;
   const password = typeof details.password === "string" ? details.password : "";
-  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return { ok: false, code: "INVALID_EMAIL" };
   if (password.length < 8) return { ok: false, code: "WEAK_PASSWORD" };
-  return { ok: true, value: { email, password } };
+  return { ok: true, value: { email: emailCheck.value, password } };
 }
 function createOnboardingService({ api, authService, learnerContext, storage = globalThis.sessionStorage, pendingKey = "learning-platform.pending-onboarding.v1" } = {}) {
   function safePending(details = {}) {
@@ -635,6 +654,7 @@ function createOnboardingService({ api, authService, learnerContext, storage = g
   return Object.freeze({
     validateProfile,
     validateAccount,
+    validateEmail,
     savePending,
     getPending,
     clearPending,
@@ -1380,11 +1400,11 @@ function createPlatformState(initial = "loading") {
 // src/core/logging/logger.js
 var SECRET_KEYS = /password|passcode|token|secret|authorization|apikey|api_key|service.?role|cookie|session/i;
 var PII_KEYS = /email|student|learner|first.?name|surname|full.?name|display.?name|contact/i;
-var EMAIL_PATTERN = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi;
+var EMAIL_PATTERN2 = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi;
 var BEARER_PATTERN = /Bearer\s+[A-Za-z0-9._~+/=-]+/gi;
 var LEVELS = Object.freeze({ debug: 10, info: 20, warn: 30, error: 40, silent: 100 });
 function redactString(value) {
-  return String(value).replace(BEARER_PATTERN, "Bearer [REDACTED]").replace(EMAIL_PATTERN, "[REDACTED_EMAIL]");
+  return String(value).replace(BEARER_PATTERN, "Bearer [REDACTED]").replace(EMAIL_PATTERN2, "[REDACTED_EMAIL]");
 }
 function redact(value, seen = /* @__PURE__ */ new WeakSet()) {
   if (typeof value === "string") return redactString(value);

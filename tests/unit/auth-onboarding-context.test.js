@@ -15,6 +15,17 @@ test("auth restores a Supabase-managed session and publishes state", async () =>
   assert.deepEqual(states, ["loading", "authenticated"]);
 });
 
+test("password sign-in sends email, not a student ID", async () => {
+  const client = fakeSupabase({ session: null });
+  const auth = createAuthService({ client });
+  await auth.signIn("learner@example.test", "password-123");
+  assert.deepEqual(client.calls.find((call) => call.type === "sign-in").credentials, {
+    email: "learner@example.test",
+    password: "password-123"
+  });
+  assert.equal(JSON.stringify(client.calls).includes("000123"), false);
+});
+
 test("sign up reports the email-confirmation boundary without storing credentials", async () => {
   const client = fakeSupabase({ session: null });
   const auth = createAuthService({

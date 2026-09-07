@@ -150,8 +150,8 @@ Security: never put tokens, passwords or raw backend objects in `detail`.
 `platform.auth` provides:
 
 - `initialise()` → restored auth-state snapshot.
-- `signIn(email, password)` → authenticated state snapshot.
-- `signUp(email, password)` → `{ user, session, needsConfirmation }` from Supabase Auth. Email confirmation links redirect to the current hub root via `options.emailRedirectTo` (derived from `hubRootPath`, not the Supabase project Site URL).
+- `signIn(email, password)` → authenticated state snapshot. The identifier is an email address.
+- `signUp(email, password)` → `{ user, session, needsConfirmation }` from Supabase Auth. Email confirmation links redirect to the current hub root via `options.emailRedirectTo` (derived from `hubRootPath`, not the Supabase project Site URL). Sign-in and sign-up failures map known Auth codes to learner-safe messages and never show raw Auth text.
 - `signOut()` → `true` after local state is cleared.
 - `subscribe(listener)` → unsubscribe function.
 - `getState()` → current auth snapshot.
@@ -170,6 +170,7 @@ Security: do not log, copy or persist the returned Auth user/session object. Pas
 
 - `validateProfile(details)` → `{ ok, value? , code? }`.
 - `validateAccount(details)` → validation result.
+- `validateEmail(email)` → `{ ok, value? , code? }` using the same email-format rule as account creation.
 - `savePending(details)` → safe pending profile subset.
 - `getPending()` → safe pending subset or `null`.
 - `clearPending()` → clears recoverable pending state.
