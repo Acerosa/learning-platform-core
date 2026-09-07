@@ -4,6 +4,18 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## [Unreleased]
 
+## 0.2.8 - 2026-09-07
+
+### Changed
+
+- Sign-in asks for email, not a username, with short helper copy for returning and new learners.
+- Create account labels email and Student ID separately so students can see which value is used to sign in.
+
+### Fixed
+
+- Sign-in validates email format before calling Auth, so a student ID is not sent as an email.
+- Auth maps `invalid_credentials`, `email_not_confirmed` and `over_email_send_rate_limit` to learner-safe messages. Unknown sign-in and sign-up failures stay generic.
+
 ## 0.2.7 - 2026-09-06
 
 ### Added

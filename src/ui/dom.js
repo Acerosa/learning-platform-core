@@ -23,10 +23,18 @@ export function labelledValue(document, label, value) {
   return wrapper;
 }
 
-export function formField(document, { id, label, type = "text", name = id, autocomplete, required = true } = {}) {
+export function formField(document, { id, label, type = "text", name = id, autocomplete, required = true, hint } = {}) {
   const wrapper = createElement(document, "div", { className: "lp-form__field" });
   const labelElement = createElement(document, "label", { htmlFor: id, text: label });
   const input = createElement(document, "input", { id, name, type, autocomplete, required });
-  wrapper.append(labelElement, input);
-  return { wrapper, input };
+  wrapper.append(labelElement);
+  let hintElement = null;
+  if (hint) {
+    const hintId = `${id}-hint`;
+    hintElement = createElement(document, "p", { id: hintId, className: "lp-form__hint", text: hint });
+    input.setAttribute("aria-describedby", hintId);
+    wrapper.append(hintElement);
+  }
+  wrapper.append(input);
+  return { wrapper, input, hintElement };
 }

@@ -20,8 +20,19 @@ const DEFAULT_MESSAGES = Object.freeze({
   unexpected: "Something went wrong. Try again or contact your tutor."
 });
 
+const CODE_MESSAGES = Object.freeze({
+  invalid_credentials: "Email or password is incorrect.",
+  email_not_confirmed: "Confirm your email before signing in.",
+  over_email_send_rate_limit: "Too many account emails have been requested. Please wait a few minutes and try again."
+});
+
+const OPERATION_MESSAGES = Object.freeze({
+  "sign-in": "We couldn't sign you in. Please try again.",
+  "sign-up": "We couldn't create your account. Please try again."
+});
+
 const CODE_RULES = Object.freeze([
-  [/AUTH|CREDENTIAL|SESSION|EMAIL_NOT_CONFIRMED/i, "authentication"],
+  [/AUTH|CREDENTIAL|SESSION|EMAIL_NOT_CONFIRMED|RATE_LIMIT/i, "authentication"],
   [/PERMISSION|FORBIDDEN|RLS|42501/i, "authorisation"],
   [/INVALID|VALIDATION|REQUIRED|MISMATCH/i, "validation"],
   [/NETWORK|FETCH|TIMEOUT|ABORT|OFFLINE/i, "network"],
@@ -63,15 +74,23 @@ function categoryFor(code, error) {
   return match ? match[1] : "platform";
 }
 
+function messageForCode(code) {
+  return CODE_MESSAGES[String(code || "").toLowerCase()] || null;
+}
+
 export function mapPlatformError(error, overrides = {}) {
   if (error instanceof PlatformError && Object.keys(overrides).length === 0) return error;
 
   const sourceCode = String(overrides.code || error?.code || error?.name || "PLATFORM_ERROR");
   const category = overrides.category || categoryFor(sourceCode, error);
+  const learnerMessage = overrides.learnerMessage
+    || messageForCode(sourceCode)
+    || OPERATION_MESSAGES[overrides.operation]
+    || DEFAULT_MESSAGES[category];
   return new PlatformError({
     code: sourceCode,
     category,
-    learnerMessage: overrides.learnerMessage || DEFAULT_MESSAGES[category],
+    learnerMessage,
     diagnostic: {
       operation: overrides.operation || null,
       status: Number.isFinite(error?.status) ? error.status : null,

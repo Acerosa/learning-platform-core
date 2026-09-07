@@ -18,6 +18,43 @@ test("platform errors use stable categories and learner-safe messages", () => {
   });
 });
 
+test("auth error codes map to learner-safe messages without revealing account existence", () => {
+  const credentials = mapPlatformError(
+    { code: "invalid_credentials", message: "Invalid login credentials" },
+    { operation: "sign-in", category: "authentication" }
+  );
+  assert.equal(credentials.learnerMessage, "Email or password is incorrect.");
+  assert.equal(credentials.learnerMessage.includes("Invalid login credentials"), false);
+
+  const unconfirmed = mapPlatformError(
+    { code: "email_not_confirmed", message: "Email not confirmed" },
+    { operation: "sign-in", category: "authentication" }
+  );
+  assert.equal(unconfirmed.learnerMessage, "Confirm your email before signing in.");
+
+  const rateLimited = mapPlatformError(
+    { code: "over_email_send_rate_limit", message: "email rate limit exceeded" },
+    { operation: "sign-up", category: "authentication" }
+  );
+  assert.equal(
+    rateLimited.learnerMessage,
+    "Too many account emails have been requested. Please wait a few minutes and try again."
+  );
+  assert.equal(rateLimited.category, "authentication");
+
+  const unknownSignIn = mapPlatformError(
+    { code: "unexpected_failure", message: "database host internal" },
+    { operation: "sign-in", category: "authentication" }
+  );
+  assert.equal(unknownSignIn.learnerMessage, "We couldn't sign you in. Please try again.");
+
+  const unknownSignUp = mapPlatformError(
+    { code: "unexpected_failure", message: "database host internal" },
+    { operation: "sign-up", category: "authentication" }
+  );
+  assert.equal(unknownSignUp.learnerMessage, "We couldn't create your account. Please try again.");
+});
+
 test("PlatformError never serialises diagnostics to the learner contract", () => {
   const error = new PlatformError({ code: "TEST", category: "platform", diagnostic: { table: "private.students" } });
   assert.equal(JSON.stringify(error).includes("private.students"), false);

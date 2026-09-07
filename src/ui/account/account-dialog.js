@@ -2,6 +2,11 @@ import { createElement, formField } from "../dom.js";
 import { createModal } from "../modal/modal.js";
 import { createOnboardingView } from "../onboarding/onboarding-view.js";
 
+const SIGN_IN_EMAIL_HINT = "Use the email address you used when creating your account.";
+const REGISTER_EMAIL_HINT = "Use this email to sign in later.";
+const STUDENT_ID_HINT = "Use your college Student ID.";
+const NEW_LEARNER_GUIDANCE = "New here? Create an account first.";
+
 export function createAccountDialog({
   document = globalThis.document,
   authService,
@@ -18,12 +23,24 @@ export function createAccountDialog({
     const signInTab = createElement(document, "button", { type: "button", role: "tab", text: "Sign in", "aria-selected": "true" });
     const registerTab = createElement(document, "button", { type: "button", role: "tab", text: "Create account", "aria-selected": "false" });
     tabs.append(signInTab, registerTab);
+    const guidance = createElement(document, "p", { className: "lp-form__guidance", text: NEW_LEARNER_GUIDANCE });
 
     const form = createElement(document, "form", { className: "lp-form", noValidate: true });
     const firstName = formField(document, { id: "lp-register-first-name", label: "First name", autocomplete: "given-name" });
     const surname = formField(document, { id: "lp-register-surname", label: "Last name", autocomplete: "family-name" });
-    const studentNumber = formField(document, { id: "lp-register-student-number", label: "Student ID", autocomplete: "off" });
-    const email = formField(document, { id: "lp-account-email", label: "Username", type: "email", autocomplete: "username" });
+    const studentNumber = formField(document, {
+      id: "lp-register-student-number",
+      label: "Student ID",
+      autocomplete: "off",
+      hint: STUDENT_ID_HINT
+    });
+    const email = formField(document, {
+      id: "lp-account-email",
+      label: "Email",
+      type: "email",
+      autocomplete: "email",
+      hint: SIGN_IN_EMAIL_HINT
+    });
     const password = formField(document, { id: "lp-account-password", label: "Password", type: "password", autocomplete: "current-password" });
     password.input.minLength = 8;
     const status = createElement(document, "p", { className: "lp-form__status", role: "status", "aria-live": "polite", tabIndex: -1 });
@@ -37,7 +54,7 @@ export function createAccountDialog({
       status,
       createElement(document, "div", { className: "lp-form__actions" }, submit)
     );
-    container.append(tabs, form);
+    container.append(tabs, guidance, form);
 
     function setRegisterField(field, registering) {
       field.wrapper.hidden = !registering;
@@ -51,9 +68,11 @@ export function createAccountDialog({
       setRegisterField(firstName, registering);
       setRegisterField(surname, registering);
       setRegisterField(studentNumber, registering);
-      email.wrapper.querySelector("label").textContent = registering ? "Email address" : "Username";
-      email.input.autocomplete = registering ? "email" : "username";
+      email.wrapper.querySelector("label").textContent = "Email";
+      if (email.hintElement) email.hintElement.textContent = registering ? REGISTER_EMAIL_HINT : SIGN_IN_EMAIL_HINT;
+      email.input.autocomplete = "email";
       password.input.autocomplete = registering ? "new-password" : "current-password";
+      guidance.hidden = registering;
       submit.textContent = registering ? "Create account" : "Sign in";
       signInTab.setAttribute("aria-selected", String(!registering));
       registerTab.setAttribute("aria-selected", String(registering));
@@ -98,7 +117,13 @@ export function createAccountDialog({
           }
           await continueAfterAuthentication();
         } else {
-          await authService.signIn(email.input.value, password.input.value);
+          const emailCheck = onboardingService.validateEmail(email.input.value);
+          if (!emailCheck.ok) {
+            const failure = new Error("Enter a valid email address.");
+            failure.code = emailCheck.code;
+            throw failure;
+          }
+          await authService.signIn(emailCheck.value, password.input.value);
           password.input.value = "";
           await continueAfterAuthentication();
         }

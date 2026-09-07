@@ -19,8 +19,17 @@ var DEFAULT_MESSAGES = Object.freeze({
   platform: "The learner service could not complete that request. Try again shortly.",
   unexpected: "Something went wrong. Try again or contact your tutor."
 });
+var CODE_MESSAGES = Object.freeze({
+  invalid_credentials: "Email or password is incorrect.",
+  email_not_confirmed: "Confirm your email before signing in.",
+  over_email_send_rate_limit: "Too many account emails have been requested. Please wait a few minutes and try again."
+});
+var OPERATION_MESSAGES = Object.freeze({
+  "sign-in": "We couldn't sign you in. Please try again.",
+  "sign-up": "We couldn't create your account. Please try again."
+});
 var CODE_RULES = Object.freeze([
-  [/AUTH|CREDENTIAL|SESSION|EMAIL_NOT_CONFIRMED/i, "authentication"],
+  [/AUTH|CREDENTIAL|SESSION|EMAIL_NOT_CONFIRMED|RATE_LIMIT/i, "authentication"],
   [/PERMISSION|FORBIDDEN|RLS|42501/i, "authorisation"],
   [/INVALID|VALIDATION|REQUIRED|MISMATCH/i, "validation"],
   [/NETWORK|FETCH|TIMEOUT|ABORT|OFFLINE/i, "network"],
@@ -58,14 +67,18 @@ function categoryFor(code, error) {
   const match = CODE_RULES.find(([pattern]) => pattern.test(code));
   return match ? match[1] : "platform";
 }
+function messageForCode(code) {
+  return CODE_MESSAGES[String(code || "").toLowerCase()] || null;
+}
 function mapPlatformError(error, overrides = {}) {
   if (error instanceof PlatformError && Object.keys(overrides).length === 0) return error;
   const sourceCode = String(overrides.code || error?.code || error?.name || "PLATFORM_ERROR");
   const category = overrides.category || categoryFor(sourceCode, error);
+  const learnerMessage = overrides.learnerMessage || messageForCode(sourceCode) || OPERATION_MESSAGES[overrides.operation] || DEFAULT_MESSAGES[category];
   return new PlatformError({
     code: sourceCode,
     category,
-    learnerMessage: overrides.learnerMessage || DEFAULT_MESSAGES[category],
+    learnerMessage,
     diagnostic: {
       operation: overrides.operation || null,
       status: Number.isFinite(error?.status) ? error.status : null,
@@ -685,6 +698,7 @@ function createLearnerContext({ authService, profileService, enrolmentService } 
 
 // src/core/onboarding/onboarding-service.js
 var SAFE_PENDING_FIELDS = Object.freeze(["firstName", "surname", "studentNumber", "registrationKey"]);
+var EMAIL_PATTERN2 = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 function clean2(value) {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -699,12 +713,17 @@ function validateProfile(details = {}) {
   if (!value.studentNumber || value.studentNumber.length > 100) return { ok: false, code: "INVALID_STUDENT_NUMBER" };
   return { ok: true, value };
 }
+function validateEmail(email) {
+  const value = clean2(email);
+  if (!EMAIL_PATTERN2.test(value)) return { ok: false, code: "INVALID_EMAIL" };
+  return { ok: true, value };
+}
 function validateAccount(details = {}) {
-  const email = clean2(details.email);
+  const emailCheck = validateEmail(details.email);
+  if (!emailCheck.ok) return emailCheck;
   const password = typeof details.password === "string" ? details.password : "";
-  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return { ok: false, code: "INVALID_EMAIL" };
   if (password.length < 8) return { ok: false, code: "WEAK_PASSWORD" };
-  return { ok: true, value: { email, password } };
+  return { ok: true, value: { email: emailCheck.value, password } };
 }
 function createOnboardingService({ api, authService, learnerContext, storage = globalThis.sessionStorage, pendingKey = "learning-platform.pending-onboarding.v1" } = {}) {
   function safePending(details = {}) {
@@ -780,6 +799,7 @@ function createOnboardingService({ api, authService, learnerContext, storage = g
   return Object.freeze({
     validateProfile,
     validateAccount,
+    validateEmail,
     savePending,
     getPending,
     clearPending,
@@ -2135,12 +2155,20 @@ function labelledValue(document, label, value) {
   );
   return wrapper;
 }
-function formField(document, { id, label, type = "text", name = id, autocomplete, required = true } = {}) {
+function formField(document, { id, label, type = "text", name = id, autocomplete, required = true, hint } = {}) {
   const wrapper = createElement(document, "div", { className: "lp-form__field" });
   const labelElement = createElement(document, "label", { htmlFor: id, text: label });
   const input = createElement(document, "input", { id, name, type, autocomplete, required });
-  wrapper.append(labelElement, input);
-  return { wrapper, input };
+  wrapper.append(labelElement);
+  let hintElement = null;
+  if (hint) {
+    const hintId = `${id}-hint`;
+    hintElement = createElement(document, "p", { id: hintId, className: "lp-form__hint", text: hint });
+    input.setAttribute("aria-describedby", hintId);
+    wrapper.append(hintElement);
+  }
+  wrapper.append(input);
+  return { wrapper, input, hintElement };
 }
 
 // src/ui/learner-header/learner-header.js
@@ -2446,6 +2474,10 @@ function createOnboardingView({
 }
 
 // src/ui/account/account-dialog.js
+var SIGN_IN_EMAIL_HINT = "Use the email address you used when creating your account.";
+var REGISTER_EMAIL_HINT = "Use this email to sign in later.";
+var STUDENT_ID_HINT = "Use your college Student ID.";
+var NEW_LEARNER_GUIDANCE = "New here? Create an account first.";
 function createAccountDialog({
   document = globalThis.document,
   authService,
@@ -2461,11 +2493,23 @@ function createAccountDialog({
     const signInTab = createElement(document, "button", { type: "button", role: "tab", text: "Sign in", "aria-selected": "true" });
     const registerTab = createElement(document, "button", { type: "button", role: "tab", text: "Create account", "aria-selected": "false" });
     tabs.append(signInTab, registerTab);
+    const guidance = createElement(document, "p", { className: "lp-form__guidance", text: NEW_LEARNER_GUIDANCE });
     const form = createElement(document, "form", { className: "lp-form", noValidate: true });
     const firstName = formField(document, { id: "lp-register-first-name", label: "First name", autocomplete: "given-name" });
     const surname = formField(document, { id: "lp-register-surname", label: "Last name", autocomplete: "family-name" });
-    const studentNumber = formField(document, { id: "lp-register-student-number", label: "Student ID", autocomplete: "off" });
-    const email = formField(document, { id: "lp-account-email", label: "Username", type: "email", autocomplete: "username" });
+    const studentNumber = formField(document, {
+      id: "lp-register-student-number",
+      label: "Student ID",
+      autocomplete: "off",
+      hint: STUDENT_ID_HINT
+    });
+    const email = formField(document, {
+      id: "lp-account-email",
+      label: "Email",
+      type: "email",
+      autocomplete: "email",
+      hint: SIGN_IN_EMAIL_HINT
+    });
     const password = formField(document, { id: "lp-account-password", label: "Password", type: "password", autocomplete: "current-password" });
     password.input.minLength = 8;
     const status = createElement(document, "p", { className: "lp-form__status", role: "status", "aria-live": "polite", tabIndex: -1 });
@@ -2479,7 +2523,7 @@ function createAccountDialog({
       status,
       createElement(document, "div", { className: "lp-form__actions" }, submit)
     );
-    container.append(tabs, form);
+    container.append(tabs, guidance, form);
     function setRegisterField(field, registering) {
       field.wrapper.hidden = !registering;
       field.input.disabled = !registering;
@@ -2491,9 +2535,11 @@ function createAccountDialog({
       setRegisterField(firstName, registering);
       setRegisterField(surname, registering);
       setRegisterField(studentNumber, registering);
-      email.wrapper.querySelector("label").textContent = registering ? "Email address" : "Username";
-      email.input.autocomplete = registering ? "email" : "username";
+      email.wrapper.querySelector("label").textContent = "Email";
+      if (email.hintElement) email.hintElement.textContent = registering ? REGISTER_EMAIL_HINT : SIGN_IN_EMAIL_HINT;
+      email.input.autocomplete = "email";
       password.input.autocomplete = registering ? "new-password" : "current-password";
+      guidance.hidden = registering;
       submit.textContent = registering ? "Create account" : "Sign in";
       signInTab.setAttribute("aria-selected", String(!registering));
       registerTab.setAttribute("aria-selected", String(registering));
@@ -2536,7 +2582,13 @@ function createAccountDialog({
           }
           await continueAfterAuthentication();
         } else {
-          await authService.signIn(email.input.value, password.input.value);
+          const emailCheck = onboardingService.validateEmail(email.input.value);
+          if (!emailCheck.ok) {
+            const failure = new Error("Enter a valid email address.");
+            failure.code = emailCheck.code;
+            throw failure;
+          }
+          await authService.signIn(emailCheck.value, password.input.value);
           password.input.value = "";
           await continueAfterAuthentication();
         }

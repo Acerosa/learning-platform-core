@@ -19,8 +19,17 @@ var DEFAULT_MESSAGES = Object.freeze({
   platform: "The learner service could not complete that request. Try again shortly.",
   unexpected: "Something went wrong. Try again or contact your tutor."
 });
+var CODE_MESSAGES = Object.freeze({
+  invalid_credentials: "Email or password is incorrect.",
+  email_not_confirmed: "Confirm your email before signing in.",
+  over_email_send_rate_limit: "Too many account emails have been requested. Please wait a few minutes and try again."
+});
+var OPERATION_MESSAGES = Object.freeze({
+  "sign-in": "We couldn't sign you in. Please try again.",
+  "sign-up": "We couldn't create your account. Please try again."
+});
 var CODE_RULES = Object.freeze([
-  [/AUTH|CREDENTIAL|SESSION|EMAIL_NOT_CONFIRMED/i, "authentication"],
+  [/AUTH|CREDENTIAL|SESSION|EMAIL_NOT_CONFIRMED|RATE_LIMIT/i, "authentication"],
   [/PERMISSION|FORBIDDEN|RLS|42501/i, "authorisation"],
   [/INVALID|VALIDATION|REQUIRED|MISMATCH/i, "validation"],
   [/NETWORK|FETCH|TIMEOUT|ABORT|OFFLINE/i, "network"],
