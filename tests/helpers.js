@@ -30,6 +30,7 @@ function queryResult(data, error = null) {
 export function fakeSupabase({
   session = null,
   views = {},
+  viewErrors = {},
   rpcs = {},
   authErrors = {}
 } = {}) {
@@ -64,7 +65,7 @@ export function fakeSupabase({
       return {
         from(view) {
           calls.push({ type: "view", view });
-          return queryResult(views[view] || []);
+          return queryResult(views[view] || [], viewErrors[view] || null);
         },
         rpc(name, payload) {
           calls.push({ type: "rpc", name, payload });
