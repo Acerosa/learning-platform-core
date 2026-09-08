@@ -206,6 +206,14 @@ export function createActivityStateStore({
     }
   }
 
+  function cancelPending() {
+    if (pendingTimer != null) {
+      clearTimeoutFn(pendingTimer);
+      pendingTimer = null;
+    }
+    pendingState = null;
+  }
+
   function flush() {
     if (pendingTimer != null) {
       clearTimeoutFn(pendingTimer);
@@ -225,6 +233,7 @@ export function createActivityStateStore({
     writeLocal(stamped);
     if (!signedIn(auth)) return stamped;
     if (isCompletedActivityState(stamped) || options.remote === false) {
+      cancelPending();
       if (isCompletedActivityState(stamped) && typeof api?.clearActivityState === "function") {
         api.clearActivityState({ activityKey: key, activityVersion: version }).catch(() => {});
       }
@@ -279,11 +288,7 @@ export function createActivityStateStore({
   }
 
   async function clear() {
-    if (pendingTimer != null) {
-      clearTimeoutFn(pendingTimer);
-      pendingTimer = null;
-    }
-    pendingState = null;
+    cancelPending();
     if (options.local !== false) {
       removeKey(storage, cacheKey());
       (Array.isArray(legacyKeys) ? legacyKeys : []).forEach((legacyKey) => removeKey(storage, legacyKey));

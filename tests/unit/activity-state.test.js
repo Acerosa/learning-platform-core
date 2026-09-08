@@ -175,3 +175,43 @@ test("guest drafts stay local and never call the activity-state API", async () =
   const restored = await store.hydrate();
   assert.equal(restored.responses.Q1, "guest");
 });
+
+test("completed save cancels a pending in-progress upload", async () => {
+  const saves = [];
+  const clears = [];
+  const queued = [];
+  const api = {
+    saveActivityState: async (payload) => {
+      saves.push(payload);
+      return [{ state: payload.state, updated_at: payload.clientUpdatedAt }];
+    },
+    clearActivityState: async (payload) => {
+      clears.push(payload);
+    }
+  };
+  const store = createActivityStateStore({
+    api,
+    auth: signedInAuth(),
+    storage: memoryStorage(),
+    activityKey: "week-1",
+    activityVersion: "1.0.0",
+    debounceMs: 50,
+    setTimeoutFn: (fn) => {
+      queued.push(fn);
+      return queued.length;
+    },
+    clearTimeoutFn: () => {
+      queued.length = 0;
+    }
+  });
+  store.save({ responses: { Q1: "draft" } });
+  store.save({
+    responses: { Q1: "draft" },
+    result: { score: 1, maxScore: 1 },
+    submission: { status: "submitted" }
+  });
+  queued.forEach((fn) => fn());
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(saves.length, 0);
+  assert.equal(clears.length, 1);
+});
