@@ -4,6 +4,14 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## [Unreleased]
 
+## 0.2.9 - 2026-09-08
+
+### Fixed
+
+- Formative `markBlock` maps `ACTIVITY_NOT_ASSIGNED`, missing learner identity,
+  and unavailable activity/question versions to specific learner-safe messages
+  instead of always showing the generic check-failed copy.
+
 ## 0.2.8 - 2026-09-07
 
 ### Changed

@@ -8,6 +8,19 @@ import {
 
 const CHECK_FAILED_MESSAGE = "Your answer could not be checked. Please try again.";
 const RETRY_LIMIT_MESSAGE = "You have used all allowed checks for this question.";
+const NOT_ASSIGNED_MESSAGE = "This activity is not assigned to you. Contact your tutor.";
+const IDENTITY_REQUIRED_MESSAGE = "Finish signing in and joining your class group before checking answers.";
+const INVALID_VERSION_MESSAGE = "This activity version is not available for checking yet. Try refreshing the page or contact your tutor.";
+
+function formativeLearnerMessage(code) {
+  const text = String(code || "");
+  if (/ACTIVITY_NOT_ASSIGNED|ASSIGNMENT_NOT_FOUND/i.test(text)) return NOT_ASSIGNED_MESSAGE;
+  if (/STUDENT_IDENTITY_NOT_FOUND/i.test(text)) return IDENTITY_REQUIRED_MESSAGE;
+  if (/INVALID_ACTIVITY_VERSION|QUESTION_WRONG_ACTIVITY_VERSION/i.test(text)) {
+    return INVALID_VERSION_MESSAGE;
+  }
+  return CHECK_FAILED_MESSAGE;
+}
 const ALLOWED_MARK_INPUT = new Set([
   "activityKey",
   "activityVersion",
@@ -334,7 +347,7 @@ export function createFormativeMarkingService({
       return aggregateRows(rows, block);
     } catch (error) {
       if (error instanceof PlatformError && error.category === "authentication") throw error;
-      const code = String(error?.code || error?.message || "");
+      const code = `${error?.code || ""} ${error?.message || ""}`.trim();
       if (/FORMATIVE_RETRY_LIMIT/i.test(code)) {
         throw mapPlatformError(error, {
           operation: "mark-formative-response",
@@ -343,9 +356,24 @@ export function createFormativeMarkingService({
           learnerMessage: RETRY_LIMIT_MESSAGE
         });
       }
+      const learnerMessage = formativeLearnerMessage(code);
       throw mapPlatformError(error, {
         operation: "mark-formative-response",
-        learnerMessage: CHECK_FAILED_MESSAGE
+        code: /ACTIVITY_NOT_ASSIGNED/i.test(code)
+          ? "ACTIVITY_NOT_ASSIGNED"
+          : /STUDENT_IDENTITY_NOT_FOUND/i.test(code)
+            ? "STUDENT_IDENTITY_NOT_FOUND"
+            : /INVALID_ACTIVITY_VERSION|QUESTION_WRONG_ACTIVITY_VERSION/i.test(code)
+              ? "INVALID_ACTIVITY_VERSION"
+              : undefined,
+        category: /ACTIVITY_NOT_ASSIGNED/i.test(code)
+          ? "authorisation"
+          : /STUDENT_IDENTITY_NOT_FOUND/i.test(code)
+            ? "authentication"
+            : /INVALID_ACTIVITY_VERSION|QUESTION_WRONG_ACTIVITY_VERSION/i.test(code)
+              ? "validation"
+              : undefined,
+        learnerMessage
       });
     }
   }
