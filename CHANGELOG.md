@@ -4,6 +4,14 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## [Unreleased]
 
+### Added
+
+- Authenticated in-progress activity state through `platform.progress.getActivityState`,
+  `saveActivityState`, `clearActivityState` and `createStore`. Server state is
+  authoritative. Browser storage is cache, resilience, or unauthenticated fallback.
+  Completing an activity cancels a pending in-progress upload so autosave cannot
+  reopen the draft.
+
 ## 0.2.9 - 2026-09-08
 
 ### Fixed

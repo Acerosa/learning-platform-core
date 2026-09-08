@@ -17,6 +17,11 @@ export { createProfileService } from "./core/profile/profile-service.js";
 export { createEnrolmentService } from "./core/enrolment/enrolment-service.js";
 export { createAssignmentService } from "./core/assignment/assignment-service.js";
 export { createProgressService } from "./core/progress/progress-service.js";
+export {
+  createActivityStateStore,
+  sanitizeActivityState,
+  reconcileActivityState
+} from "./core/progress/activity-state.js";
 export { createSubmissionService, assertSecureSubmission } from "./core/submission/submission-service.js";
 export { createFormativeMarkingService } from "./core/marking/formative-marking-service.js";
 export { toApiResponse } from "./core/evidence/evidence.js";

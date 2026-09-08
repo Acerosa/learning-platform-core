@@ -40,7 +40,11 @@ export function createPlatform(options = {}, dependencies = {}) {
   const profile = createProfileService(api);
   const enrolments = createEnrolmentService(api);
   const assignments = createAssignmentService(api);
-  const progress = createProgressService(api);
+  const progress = createProgressService(api, {
+    auth,
+    storage: dependencies.localStorage,
+    hubCode: config.hubCode
+  });
   const learner = createLearnerContext({ authService: auth, profileService: profile, enrolmentService: enrolments });
   const onboarding = createOnboardingService({
     api,

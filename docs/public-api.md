@@ -216,10 +216,16 @@ Security: assignments come from approved learner-scoped API views. A hub must no
 - `getProgress(activityKey?)` → backend progress rows.
 - `getAttempts(activityKey?)` → backend attempt rows.
 - `getResponses(activityKey?)` → backend response rows.
+- `getActivityState(activityKey, activityVersion)` → current in-progress draft, or `null`.
+- `saveActivityState(activityKey, activityVersion, state)` → upsert the current draft.
+- `clearActivityState(activityKey, activityVersion)` → mark the draft completed.
+- `createStore({ activityKey, activityVersion, storage, legacyKeys, debounceMs })` → local cache plus server persistence.
 
-Lifecycle: call after authentication. Refresh after a successful submission where immediate UI updates are required.
+Authenticated learner in-progress activity state is persisted server-side and restored across browser sessions and devices. Browser storage may only be used as cache, resilience, or unauthenticated fallback. Drafts are not official attempts, scores, or derived progress.
 
-Security: results are backend authority. Local browser draft state must not be merged into authoritative completion, attempts or scores.
+Lifecycle: call after authentication. Hydrate before rendering an unfinished activity. Save on meaningful answer changes (debounced for text). Clear or rely on `submit_attempt` after a successful final submission.
+
+Security: results from `getProgress` / `getAttempts` are backend authority. Local browser draft state must not be merged into authoritative completion, attempts or scores. Draft payloads must not contain marks, scores, answer keys or learner identity fields.
 
 ## 12. Submission API — STABLE
 

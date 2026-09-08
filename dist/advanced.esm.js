@@ -163,38 +163,38 @@ function safeBrandColour(value, fallback) {
   }
   return colour;
 }
-function createPlatformConfig(options = {}) {
-  const hubCode = cleanString(options.hubCode);
-  const hubName = cleanString(options.hubName);
+function createPlatformConfig(options2 = {}) {
+  const hubCode = cleanString(options2.hubCode);
+  const hubName = cleanString(options2.hubName);
   if (!HUB_CODE_PATTERN.test(hubCode)) {
     throw new PlatformError({ code: "INVALID_HUB_CODE", category: "configuration" });
   }
   if (!hubName) {
     throw new PlatformError({ code: "INVALID_HUB_NAME", category: "configuration" });
   }
-  if (options.apiSchema && options.apiSchema !== "api") {
+  if (options2.apiSchema && options2.apiSchema !== "api") {
     throw new PlatformError({ code: "PRIVATE_SCHEMA_PROHIBITED", category: "configuration" });
   }
-  const navigationMode = navigationModeFrom(options.navigationMode);
+  const navigationMode = navigationModeFrom(options2.navigationMode);
   return Object.freeze({
     hubCode,
     hubName,
-    platformVersion: cleanString(options.platformVersion) || "0.1",
+    platformVersion: cleanString(options2.platformVersion) || "0.1",
     apiSchema: "api",
-    accountPath: cleanString(options.accountPath) || "./account/",
+    accountPath: cleanString(options2.accountPath) || "./account/",
     /** Relative path from the current page to the hub root (e.g. "./", "../"). Used for auth email redirects. */
-    hubRootPath: cleanString(options.hubRootPath) || "./",
+    hubRootPath: cleanString(options2.hubRootPath) || "./",
     navigationMode,
-    navigation: navigationFrom(options.navigation, navigationMode),
-    features: Object.freeze({ ...options.features || {} }),
+    navigation: navigationFrom(options2.navigation, navigationMode),
+    features: Object.freeze({ ...options2.features || {} }),
     theme: Object.freeze({
-      primary: safeBrandColour(options.theme?.primary, "#315b7d"),
-      accent: safeBrandColour(options.theme?.accent, "#4f7695")
+      primary: safeBrandColour(options2.theme?.primary, "#315b7d"),
+      accent: safeBrandColour(options2.theme?.accent, "#4f7695")
     }),
-    courseKey: cleanString(options.courseKey),
+    courseKey: cleanString(options2.courseKey),
     supabase: Object.freeze({
-      projectUrl: cleanString(options.supabase?.projectUrl),
-      publishableKey: cleanString(options.supabase?.publishableKey)
+      projectUrl: cleanString(options2.supabase?.projectUrl),
+      publishableKey: cleanString(options2.supabase?.publishableKey)
     })
   });
 }
@@ -275,6 +275,21 @@ function createLearnerApi({ client, schema = "api", logger } = {}) {
     }),
     getProgress: (activityKey) => read("my_activity_progress", {
       filters: [{ column: "activity_key", value: activityKey }]
+    }),
+    getActivityState: ({ activityKey, activityVersion } = {}) => rpc("get_activity_state", {
+      p_activity_key: activityKey,
+      p_activity_version: activityVersion
+    }),
+    saveActivityState: ({ activityKey, activityVersion, state, clientUpdatedAt = null, hubCode = null } = {}) => rpc("save_activity_state", {
+      p_activity_key: activityKey,
+      p_activity_version: activityVersion,
+      p_state: state,
+      p_client_updated_at: clientUpdatedAt,
+      p_hub_code: hubCode
+    }),
+    clearActivityState: ({ activityKey, activityVersion } = {}) => rpc("clear_activity_state", {
+      p_activity_key: activityKey,
+      p_activity_version: activityVersion
     }),
     getRegistrationOptions: () => rpc("registration_options"),
     completeOnboarding: (payload) => rpc("complete_learner_onboarding", payload),
@@ -682,15 +697,6 @@ function createAssignmentService(api) {
   });
 }
 
-// src/core/progress/progress-service.js
-function createProgressService(api) {
-  return Object.freeze({
-    getProgress: (activityKey) => api.getProgress(activityKey),
-    getAttempts: (activityKey) => api.getAttempts(activityKey),
-    getResponses: (activityKey) => api.getResponses(activityKey)
-  });
-}
-
 // src/core/security/hub-security-baseline.js
 var HUB_SECURITY_CONTROLS = Object.freeze([
   "HSB-01",
@@ -751,6 +757,353 @@ function resolveActivityVersion(activity) {
   if (/^latest$/i.test(canonical)) return "";
   if (!/^\d+\.\d+\.\d+/.test(canonical)) return "";
   return canonical;
+}
+
+// src/core/progress/activity-state.js
+var ACTIVITY_STATE_CACHE_PREFIX = "learning-platform.activity-state.v1";
+var FORBIDDEN_KEY = /^(score|max_score|maxscore|awarded_score|awardedscore|is_correct|iscorrect|marking_source|markingsource|total_score|totalscore|percentage|correctvalues|correct_values|correctoptionid|correct_option_id|correctcategoryid|correct_category_id|correctmapping|correct_mapping|answerkey|answer_key|learnerid|learner_id|studentid|student_id|studentnumber|student_number|enrolmentid|enrolment_id|assignmentid|assignment_id|attemptnumber|attempt_number|groupid|group_id|firstname|first_name|surname|email)$/i;
+function sanitizeActivityState(value) {
+  if (Array.isArray(value)) return value.map((item2) => sanitizeActivityState(item2));
+  if (!value || typeof value !== "object") return value;
+  const next = {};
+  Object.keys(value).forEach((key) => {
+    if (FORBIDDEN_KEY.test(key.replace(/[^a-zA-Z0-9]/g, ""))) return;
+    if (FORBIDDEN_KEY.test(key)) return;
+    next[key] = sanitizeActivityState(value[key]);
+  });
+  return next;
+}
+function activityStateHasWork(state) {
+  if (!state || typeof state !== "object") return false;
+  const responses = state.responses;
+  if (responses && typeof responses === "object" && Object.keys(responses).length > 0) return true;
+  if (Array.isArray(state.submittedSections) && state.submittedSections.length > 0) return true;
+  if (state.markedSections && typeof state.markedSections === "object" && Object.keys(state.markedSections).length > 0) {
+    return true;
+  }
+  if (state.checked && typeof state.checked === "object" && Object.keys(state.checked).length > 0) return true;
+  return false;
+}
+function isCompletedActivityState(state) {
+  if (!state || typeof state !== "object") return false;
+  if (state.completed === true || state.finalSubmission) return true;
+  if (state.result && typeof state.result === "object") return true;
+  if (state.submission && state.submission.status === "submitted") return true;
+  return false;
+}
+function parseTime(value) {
+  if (!value) return 0;
+  const time = value instanceof Date ? value.getTime() : Date.parse(String(value));
+  return Number.isFinite(time) ? time : 0;
+}
+function reconcileActivityState(local, server) {
+  const localState = local?.state || local || null;
+  const serverState = server?.state || null;
+  const localAt = parseTime(local?.updatedAt || localState?.updatedAt);
+  const serverAt = parseTime(server?.updatedAt || serverState?.updatedAt);
+  const localWork = activityStateHasWork(localState);
+  const serverWork = activityStateHasWork(serverState);
+  if (isCompletedActivityState(localState) && !serverWork) {
+    return { state: localState, updatedAt: local?.updatedAt || localState?.updatedAt || null, source: "local" };
+  }
+  if (serverWork && (!localWork || serverAt >= localAt)) {
+    return {
+      state: serverState,
+      updatedAt: server?.updatedAt || serverState?.updatedAt || null,
+      source: "server"
+    };
+  }
+  if (localWork) {
+    return {
+      state: localState,
+      updatedAt: local?.updatedAt || localState?.updatedAt || null,
+      source: "local",
+      migrate: !serverWork || localAt > serverAt
+    };
+  }
+  return { state: serverState || localState || null, updatedAt: server?.updatedAt || null, source: serverState ? "server" : "empty" };
+}
+function activityStateCacheKey(activityKey, activityVersion, learnerKey) {
+  return [
+    ACTIVITY_STATE_CACHE_PREFIX,
+    encodeURIComponent(learnerKey || "guest"),
+    encodeURIComponent(activityKey),
+    encodeURIComponent(activityVersion)
+  ].join(":");
+}
+function readJson(storage, key) {
+  if (!storage || !key) return null;
+  try {
+    const raw = storage.getItem(key);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+function writeJson(storage, key, value) {
+  if (!storage || !key) return false;
+  try {
+    storage.setItem(key, JSON.stringify(value));
+    return true;
+  } catch {
+    return false;
+  }
+}
+function removeKey(storage, key) {
+  if (!storage || !key) return;
+  try {
+    storage.removeItem(key);
+  } catch {
+  }
+}
+function signedIn(auth) {
+  return Boolean(auth && typeof auth.isSignedIn === "function" && auth.isSignedIn() === true);
+}
+function learnerCacheKey(auth) {
+  try {
+    const session = typeof auth?.getSession === "function" ? auth.getSession() : null;
+    if (session?.user?.id) return `auth:${session.user.id}`;
+  } catch {
+  }
+  if (signedIn(auth)) return "authenticated";
+  return "guest";
+}
+function asRecord(row) {
+  if (!row) return null;
+  return {
+    activityKey: row.activity_key || row.activityKey,
+    activityVersion: row.activity_version || row.activityVersion,
+    status: row.status || "in_progress",
+    state: row.state || row.state_payload || {},
+    startedAt: row.started_at || row.startedAt || null,
+    updatedAt: row.updated_at || row.updatedAt || null,
+    completedAt: row.completed_at || row.completedAt || null
+  };
+}
+function firstRow(result) {
+  if (Array.isArray(result)) return result[0] || null;
+  return result || null;
+}
+function createActivityStateStore({
+  api,
+  auth = null,
+  storage = null,
+  hubCode = null,
+  activityKey,
+  activityVersion,
+  debounceMs = 600,
+  legacyKeys = [],
+  setTimeoutFn = globalThis.setTimeout.bind(globalThis),
+  clearTimeoutFn = globalThis.clearTimeout.bind(globalThis)
+} = {}) {
+  const key = typeof activityKey === "string" ? activityKey.trim() : "";
+  const version = canonicalActivityVersion(activityVersion);
+  if (!key) throw new PlatformError({ code: "ACTIVITY_KEY_REQUIRED", category: "validation" });
+  if (!version) throw new PlatformError({ code: "ACTIVITY_VERSION_REQUIRED", category: "validation" });
+  let pendingTimer = null;
+  let pendingState = null;
+  let destroyed = false;
+  function cacheKey() {
+    return activityStateCacheKey(key, version, learnerCacheKey(auth));
+  }
+  function readLocal(preferred) {
+    const candidates = [];
+    if (preferred && typeof preferred === "object") candidates.push(preferred);
+    const cached = readJson(storage, cacheKey());
+    if (cached) candidates.push(cached);
+    (Array.isArray(legacyKeys) ? legacyKeys : []).forEach((legacyKey) => {
+      const stored = readJson(storage, legacyKey);
+      if (stored) candidates.push(stored);
+    });
+    return candidates.reduce((best, item2) => {
+      if (!best) return item2;
+      const bestAt = parseTime(best.updatedAt);
+      const itemAt = parseTime(item2.updatedAt);
+      if (itemAt > bestAt) return item2;
+      if (itemAt === bestAt && activityStateHasWork(item2) && !activityStateHasWork(best)) return item2;
+      return best;
+    }, null);
+  }
+  function writeLocal(state) {
+    return writeJson(storage, cacheKey(), state);
+  }
+  async function pushServer(state) {
+    if (!signedIn(auth) || typeof api?.saveActivityState !== "function") return null;
+    const sanitized = sanitizeActivityState(state || {});
+    const updatedAt = state?.updatedAt || (/* @__PURE__ */ new Date()).toISOString();
+    try {
+      const saved = asRecord(firstRow(await api.saveActivityState({
+        activityKey: key,
+        activityVersion: version,
+        state: sanitized,
+        clientUpdatedAt: updatedAt,
+        hubCode
+      })));
+      if (saved?.state) writeLocal({ ...saved.state, updatedAt: saved.updatedAt, startedAt: saved.startedAt });
+      return saved;
+    } catch (error) {
+      writeLocal({ ...state, updatedAt, pendingSave: true });
+      throw error;
+    }
+  }
+  function cancelPending() {
+    if (pendingTimer != null) {
+      clearTimeoutFn(pendingTimer);
+      pendingTimer = null;
+    }
+    pendingState = null;
+  }
+  function flush() {
+    if (pendingTimer != null) {
+      clearTimeoutFn(pendingTimer);
+      pendingTimer = null;
+    }
+    if (!pendingState) return Promise.resolve(null);
+    const next = pendingState;
+    pendingState = null;
+    return pushServer(next).catch(() => next);
+  }
+  function save(state, options2 = {}) {
+    const stamped = {
+      ...sanitizeActivityState(state || {}),
+      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    writeLocal(stamped);
+    if (!signedIn(auth)) return stamped;
+    if (isCompletedActivityState(stamped) || options2.remote === false) {
+      cancelPending();
+      if (isCompletedActivityState(stamped) && typeof api?.clearActivityState === "function") {
+        api.clearActivityState({ activityKey: key, activityVersion: version }).catch(() => {
+        });
+      }
+      return stamped;
+    }
+    pendingState = stamped;
+    if (options2.immediate) {
+      flush();
+      return stamped;
+    }
+    if (pendingTimer != null) clearTimeoutFn(pendingTimer);
+    pendingTimer = setTimeoutFn(() => {
+      pendingTimer = null;
+      flush();
+    }, Number.isFinite(options2.debounceMs) ? options2.debounceMs : debounceMs);
+    return stamped;
+  }
+  async function hydrate2(preferredLocal) {
+    const local = readLocal(preferredLocal);
+    if (!signedIn(auth) || typeof api?.getActivityState !== "function") {
+      if (local) writeLocal(local);
+      return local;
+    }
+    let server = null;
+    try {
+      server = asRecord(firstRow(await api.getActivityState({
+        activityKey: key,
+        activityVersion: version
+      })));
+    } catch {
+      if (local) writeLocal(local);
+      return local;
+    }
+    const resolved = reconcileActivityState(
+      { state: local, updatedAt: local?.updatedAt },
+      server ? { state: server.state, updatedAt: server.updatedAt } : null
+    );
+    if (resolved.state) {
+      const next = {
+        ...resolved.state,
+        updatedAt: resolved.updatedAt || resolved.state.updatedAt || (/* @__PURE__ */ new Date()).toISOString(),
+        startedAt: resolved.state.startedAt || server?.startedAt || resolved.state.startedAt
+      };
+      writeLocal(next);
+      if (resolved.migrate) {
+        try {
+          await pushServer(next);
+        } catch {
+        }
+      }
+      return next;
+    }
+    return null;
+  }
+  async function clear() {
+    cancelPending();
+    if (options.local !== false) {
+      removeKey(storage, cacheKey());
+      (Array.isArray(legacyKeys) ? legacyKeys : []).forEach((legacyKey) => removeKey(storage, legacyKey));
+    }
+    if (signedIn(auth) && typeof api?.clearActivityState === "function") {
+      try {
+        await api.clearActivityState({ activityKey: key, activityVersion: version });
+      } catch {
+      }
+    }
+  }
+  function destroy() {
+    destroyed = true;
+    if (pendingTimer != null) clearTimeoutFn(pendingTimer);
+  }
+  if (typeof globalThis.addEventListener === "function") {
+    const onHide = () => {
+      if (!destroyed) flush();
+    };
+    globalThis.addEventListener("pagehide", onHide);
+    globalThis.addEventListener("beforeunload", onHide);
+  }
+  return Object.freeze({
+    activityKey: key,
+    activityVersion: version,
+    cacheKey,
+    hydrate: hydrate2,
+    save,
+    flush,
+    clear,
+    destroy,
+    load: () => readLocal()
+  });
+}
+
+// src/core/progress/progress-service.js
+function firstRow2(result) {
+  if (Array.isArray(result)) return result[0] || null;
+  return result || null;
+}
+function createProgressService(api, options2 = {}) {
+  return Object.freeze({
+    getProgress: (activityKey) => api.getProgress(activityKey),
+    getAttempts: (activityKey) => api.getAttempts(activityKey),
+    getResponses: (activityKey) => api.getResponses(activityKey),
+    getActivityState: async (activityKey, activityVersion) => firstRow2(
+      await api.getActivityState({
+        activityKey,
+        activityVersion: canonicalActivityVersion(activityVersion)
+      })
+    ),
+    saveActivityState: (activityKey, activityVersion, state, extras = {}) => api.saveActivityState({
+      activityKey,
+      activityVersion: canonicalActivityVersion(activityVersion),
+      state,
+      clientUpdatedAt: extras.clientUpdatedAt,
+      hubCode: extras.hubCode ?? options2.hubCode
+    }),
+    clearActivityState: (activityKey, activityVersion) => api.clearActivityState({
+      activityKey,
+      activityVersion: canonicalActivityVersion(activityVersion)
+    }),
+    createStore: (storeOptions = {}) => createActivityStateStore({
+      api,
+      auth: options2.auth,
+      storage: storeOptions.storage ?? options2.storage,
+      hubCode: options2.hubCode,
+      debounceMs: storeOptions.debounceMs,
+      legacyKeys: storeOptions.legacyKeys,
+      setTimeoutFn: storeOptions.setTimeoutFn,
+      clearTimeoutFn: storeOptions.clearTimeoutFn,
+      activityKey: storeOptions.activityKey,
+      activityVersion: storeOptions.activityVersion
+    })
+  });
 }
 
 // src/core/evidence/evidence.js
@@ -1513,7 +1866,7 @@ var LEARNER_LABELS = Object.freeze({
   INCOMPATIBLE: "Unavailable to save",
   ERROR: "Temporarily unable to save progress"
 });
-function firstRow(payload) {
+function firstRow3(payload) {
   if (Array.isArray(payload)) return payload[0] || null;
   if (payload && typeof payload === "object") return payload;
   return null;
@@ -1646,7 +1999,7 @@ function createPublicationResolver({
   async function fetchPublishedPackage(hubCode, courseKey, packageVersion) {
     if (typeof api?.getPublishedCurriculumPackage === "function") {
       const payload = await api.getPublishedCurriculumPackage(hubCode, courseKey, packageVersion);
-      const row2 = firstRow(payload);
+      const row2 = firstRow3(payload);
       if (!row2 || !row2.package) throw new Error("publication-lookup-empty");
       return row2;
     }
@@ -1671,7 +2024,7 @@ function createPublicationResolver({
       body: JSON.stringify(body)
     });
     if (!response?.ok) throw new Error("publication-lookup-failed");
-    const row = firstRow(await response.json());
+    const row = firstRow3(await response.json());
     if (!row || !row.package) throw new Error("publication-lookup-empty");
     return row;
   }
@@ -1745,23 +2098,23 @@ function renderPublicationStatus(state) {
   const modifier = String(state.state || "ERROR").toLowerCase().replace(/_/g, "-");
   return `<section class="publication-banner publication-banner--${modifier}" role="status" data-publication-state="${state.state}"><strong>${LEARNER_LABELS[state.state]}</strong><p>${LEARNER_COPY[state.state]}</p></section>`;
 }
-function createPublishedCurriculumService(options = {}) {
-  const hubCode = String(options.hubCode || "").trim();
-  const courseKey = String(options.courseKey || "").trim();
-  const schemaLoader = options.schemaLoader || createRuntimeSchemaLoader({
-    supportedSchemaVersion: options.supportedSchemaVersion,
-    supportedPackageVersion: options.supportedPackageVersion
+function createPublishedCurriculumService(options2 = {}) {
+  const hubCode = String(options2.hubCode || "").trim();
+  const courseKey = String(options2.courseKey || "").trim();
+  const schemaLoader = options2.schemaLoader || createRuntimeSchemaLoader({
+    supportedSchemaVersion: options2.supportedSchemaVersion,
+    supportedPackageVersion: options2.supportedPackageVersion
   });
-  const validator = options.validator || createCurriculumValidator({
-    validatePackage: options.validatePackage
+  const validator = options2.validator || createCurriculumValidator({
+    validatePackage: options2.validatePackage
   });
-  const cache = options.cache || createCacheManager(options.storage);
-  const resolver = options.resolver || createPublicationResolver({
-    api: options.api,
-    fetchFn: options.fetch || globalThis.fetch,
-    projectUrl: options.projectUrl || options.supabase?.projectUrl || options.config?.projectUrl,
-    publishableKey: options.publishableKey || options.supabase?.publishableKey || options.config?.publishableKey,
-    getAccessToken: options.getAccessToken || (() => options.session?.access_token)
+  const cache = options2.cache || createCacheManager(options2.storage);
+  const resolver = options2.resolver || createPublicationResolver({
+    api: options2.api,
+    fetchFn: options2.fetch || globalThis.fetch,
+    projectUrl: options2.projectUrl || options2.supabase?.projectUrl || options2.config?.projectUrl,
+    publishableKey: options2.publishableKey || options2.supabase?.publishableKey || options2.config?.publishableKey,
+    getAccessToken: options2.getAccessToken || (() => options2.session?.access_token)
   });
   let current = null;
   function setState(state) {
@@ -1769,7 +2122,7 @@ function createPublishedCurriculumService(options = {}) {
     return current;
   }
   async function fallback(reason, packageVersion) {
-    const loadBundled = options.loadBundled;
+    const loadBundled = options2.loadBundled;
     if (typeof loadBundled !== "function") {
       const cached = cache.read(hubCode, courseKey, packageVersion || "latest");
       if (cached?.package && validator.validate(cached.package).valid) {
@@ -1857,6 +2210,7 @@ function createPublishedCurriculumService(options = {}) {
 export {
   assertSecureSubmission,
   cleanAuthCallbackFromUrl,
+  createActivityStateStore,
   createAssignmentService,
   createAuthService,
   createEnrolmentService,
@@ -1876,8 +2230,10 @@ export {
   createSupabaseClient,
   derivePlatformState,
   mapPlatformError,
+  reconcileActivityState,
   redact,
   resolveAuthRedirectUrl,
+  sanitizeActivityState,
   toApiResponse
 };
 //# sourceMappingURL=advanced.esm.js.map
