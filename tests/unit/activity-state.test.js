@@ -176,7 +176,84 @@ test("guest drafts stay local and never call the activity-state API", async () =
   assert.equal(restored.responses.Q1, "guest");
 });
 
-test("completed save cancels a pending in-progress upload", async () => {
+test("practice completed flag still upserts checked responses", async () => {
+  const saves = [];
+  const api = {
+    saveActivityState: async (payload) => {
+      saves.push(payload);
+      return [{ state: payload.state, updated_at: payload.clientUpdatedAt }];
+    },
+    clearActivityState: async () => {
+      throw new Error("checked drafts must not be cleared");
+    }
+  };
+  const store = createActivityStateStore({
+    api,
+    auth: signedInAuth(),
+    storage: memoryStorage(),
+    activityKey: "week-1",
+    activityVersion: "1.0.0"
+  });
+  store.save({
+    responses: { Q1: "C" },
+    checked: { Q1: true },
+    completed: true
+  }, { immediate: true });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(saves.length, 1);
+  assert.equal(saves[0].state.responses.Q1, "C");
+  assert.equal(saves[0].state.checked.Q1, true);
+});
+
+test("retry Check replaces the stored response for the same question", async () => {
+  const saves = [];
+  const api = {
+    saveActivityState: async (payload) => {
+      saves.push(payload);
+      return [{ state: payload.state, updated_at: payload.clientUpdatedAt }];
+    }
+  };
+  const store = createActivityStateStore({
+    api,
+    auth: signedInAuth(),
+    storage: memoryStorage(),
+    activityKey: "week-1",
+    activityVersion: "1.0.0"
+  });
+  store.save({ responses: { Q1: "A" }, checked: { Q1: true } }, { immediate: true });
+  store.save({ responses: { Q1: "C" }, checked: { Q1: true } }, { immediate: true });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(saves.at(-1).state.responses.Q1, "C");
+  assert.deepEqual(Object.keys(saves.at(-1).state.responses), ["Q1"]);
+});
+
+test("local-only cache does not upload or clear the server draft", async () => {
+  const saves = [];
+  const clears = [];
+  const api = {
+    saveActivityState: async (payload) => {
+      saves.push(payload);
+      return [{ state: payload.state, updated_at: payload.clientUpdatedAt }];
+    },
+    clearActivityState: async (payload) => {
+      clears.push(payload);
+    }
+  };
+  const store = createActivityStateStore({
+    api,
+    auth: signedInAuth(),
+    storage: memoryStorage(),
+    activityKey: "week-1",
+    activityVersion: "1.0.0"
+  });
+  store.save({ responses: { Q1: "A" }, checked: { Q1: true }, completed: true }, { remote: false });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(saves.length, 0);
+  assert.equal(clears.length, 0);
+  assert.equal(store.load().responses.Q1, "A");
+});
+
+test("submitted draft still upserts latest responses instead of clearing", async () => {
   const saves = [];
   const clears = [];
   const queued = [];
@@ -204,14 +281,15 @@ test("completed save cancels a pending in-progress upload", async () => {
       queued.length = 0;
     }
   });
-  store.save({ responses: { Q1: "draft" } });
+  store.save({ responses: { Q1: "A" }, checked: { Q1: true } });
   store.save({
-    responses: { Q1: "draft" },
-    result: { score: 1, maxScore: 1 },
+    responses: { Q1: "C" },
+    checked: { Q1: true },
     submission: { status: "submitted" }
-  });
+  }, { immediate: true });
   queued.forEach((fn) => fn());
   await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.equal(saves.length, 0);
-  assert.equal(clears.length, 1);
+  assert.equal(clears.length, 0);
+  assert.equal(saves.length, 1);
+  assert.equal(saves[0].state.responses.Q1, "C");
 });

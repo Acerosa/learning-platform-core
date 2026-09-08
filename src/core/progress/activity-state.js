@@ -231,12 +231,8 @@ export function createActivityStateStore({
       updatedAt: new Date().toISOString()
     };
     writeLocal(stamped);
-    if (!signedIn(auth)) return stamped;
-    if (isCompletedActivityState(stamped) || options.remote === false) {
-      cancelPending();
-      if (isCompletedActivityState(stamped) && typeof api?.clearActivityState === "function") {
-        api.clearActivityState({ activityKey: key, activityVersion: version }).catch(() => {});
-      }
+    if (!signedIn(auth) || options.remote === false) {
+      if (options.remote === false) cancelPending();
       return stamped;
     }
     pendingState = stamped;

@@ -965,13 +965,8 @@ var LearningPlatformCore = (() => {
         updatedAt: (/* @__PURE__ */ new Date()).toISOString()
       };
       writeLocal(stamped);
-      if (!signedIn(auth)) return stamped;
-      if (isCompletedActivityState(stamped) || options2.remote === false) {
-        cancelPending();
-        if (isCompletedActivityState(stamped) && typeof api?.clearActivityState === "function") {
-          api.clearActivityState({ activityKey: key, activityVersion: version }).catch(() => {
-          });
-        }
+      if (!signedIn(auth) || options2.remote === false) {
+        if (options2.remote === false) cancelPending();
         return stamped;
       }
       pendingState = stamped;
