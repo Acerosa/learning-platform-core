@@ -389,3 +389,44 @@ test("a successful check clears the pending clientCheckId", async () => {
   await marking.markBlock(input);
   assert.notEqual(calls[0].p_client_check_id, calls[1].p_client_check_id);
 });
+
+test("ACTIVITY_NOT_ASSIGNED maps to a tutor-facing learner message", async () => {
+  const { marking } = service(async () => {
+    throw Object.assign(new Error("ACTIVITY_NOT_ASSIGNED"), { code: "42501", message: "ACTIVITY_NOT_ASSIGNED" });
+  });
+  await assert.rejects(
+    () => marking.markBlock({
+      activityKey: "week-1-digital-technology",
+      activityVersion: "0.1.0",
+      block: {
+        id: "week-1-digital-match",
+        type: "classification",
+        content: {
+          questionId: "week-1-digital-match",
+          items: [{ id: "d-iot" }]
+        }
+      },
+      responses: { "d-iot": "iot" }
+    }),
+    (error) => error instanceof PlatformError
+      && error.code === "ACTIVITY_NOT_ASSIGNED"
+      && /not assigned to you/i.test(error.learnerMessage)
+  );
+});
+
+test("INVALID_ACTIVITY_VERSION maps to a refresh/tutor learner message", async () => {
+  const { marking } = service(async () => {
+    throw Object.assign(new Error("INVALID_ACTIVITY_VERSION"), { message: "INVALID_ACTIVITY_VERSION" });
+  });
+  await assert.rejects(
+    () => marking.markBlock({
+      activityKey: "week-2-starter",
+      activityVersion: "0.1.0",
+      block: { id: "q1", type: "single-choice", content: { questionId: "q1" } },
+      responses: { optionId: "a" }
+    }),
+    (error) => error instanceof PlatformError
+      && error.code === "INVALID_ACTIVITY_VERSION"
+      && /not available for checking/i.test(error.learnerMessage)
+  );
+});
