@@ -4,6 +4,8 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## [Unreleased]
 
+## 0.2.10 - 2026-09-08
+
 ### Added
 
 - Authenticated in-progress activity state through `platform.progress.getActivityState`,
