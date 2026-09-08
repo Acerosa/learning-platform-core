@@ -9,7 +9,7 @@ Version: **0.2.0** (additive shared hub UI release).
 - Supabase client creation through the tested Supabase JS 2.112.3 SDK.
 - Authentication, session restoration and auth-state subscription.
 - Staged registration, email-confirmation recovery and authenticated onboarding.
-- Backend-derived learner context, profile, enrolment, assignment and progress services.
+- Backend-derived learner context, profile, enrolment, assignment, progress and in-progress activity-state services.
 - A published-curriculum runtime (`platform.curriculum` / `@learning-platform/core/curriculum-runtime`).
 - An evidence-only submission contract with stable client attempt IDs and idempotent retries.
 - Neutral evidence builders for single choice, multi-select, matching, ordering, written response, reflection, coding and classification.

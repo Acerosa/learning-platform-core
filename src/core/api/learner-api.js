@@ -60,6 +60,21 @@ export function createLearnerApi({ client, schema = "api", logger } = {}) {
     getProgress: (activityKey) => read("my_activity_progress", {
       filters: [{ column: "activity_key", value: activityKey }]
     }),
+    getActivityState: ({ activityKey, activityVersion } = {}) => rpc("get_activity_state", {
+      p_activity_key: activityKey,
+      p_activity_version: activityVersion
+    }),
+    saveActivityState: ({ activityKey, activityVersion, state, clientUpdatedAt = null, hubCode = null } = {}) => rpc("save_activity_state", {
+      p_activity_key: activityKey,
+      p_activity_version: activityVersion,
+      p_state: state,
+      p_client_updated_at: clientUpdatedAt,
+      p_hub_code: hubCode
+    }),
+    clearActivityState: ({ activityKey, activityVersion } = {}) => rpc("clear_activity_state", {
+      p_activity_key: activityKey,
+      p_activity_version: activityVersion
+    }),
     getRegistrationOptions: () => rpc("registration_options"),
     completeOnboarding: (payload) => rpc("complete_learner_onboarding", payload),
     submitAttempt: (payload) => rpc("submit_attempt", payload),

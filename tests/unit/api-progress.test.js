@@ -22,7 +22,7 @@ test("learner API selects only the approved api schema", async () => {
 
 test("learner API exposes profile, enrolment, assignment, delivery, attempts, responses and progress contracts", () => {
   const api = createLearnerApi({ client: fakeSupabase() });
-  for (const method of ["getProfile", "getEnrolments", "getAssignments", "getCurriculumDelivery", "getAttempts", "getResponses", "getProgress", "getRegistrationOptions", "completeOnboarding", "submitAttempt", "markFormativeResponse", "getPublishedCurriculum", "getPublishedCurriculumPackage"]) {
+  for (const method of ["getProfile", "getEnrolments", "getAssignments", "getCurriculumDelivery", "getAttempts", "getResponses", "getProgress", "getActivityState", "saveActivityState", "clearActivityState", "getRegistrationOptions", "completeOnboarding", "submitAttempt", "markFormativeResponse", "getPublishedCurriculum", "getPublishedCurriculumPackage"]) {
     assert.equal(typeof api[method], "function", method);
   }
 });
@@ -63,4 +63,27 @@ test("progress service obtains authoritative progress from the API", async () =>
   await progress.getAttempts("a");
   await progress.getResponses("a");
   assert.deepEqual(calls, [["progress", "a"], ["attempts", "a"], ["responses", "a"]]);
+});
+
+test("progress service restores and saves in-progress activity state", async () => {
+  const calls = [];
+  const progress = createProgressService({
+    getProgress: async () => [],
+    getAttempts: async () => [],
+    getResponses: async () => [],
+    getActivityState: async (payload) => {
+      calls.push(["get", payload]);
+      return [{ activity_key: payload.activityKey, state: { responses: { Q1: "a" } }, updated_at: "2026-09-08T10:00:00.000Z" }];
+    },
+    saveActivityState: async (payload) => {
+      calls.push(["save", payload]);
+      return [{ activity_key: payload.activityKey, state: payload.state, updated_at: "2026-09-08T10:01:00.000Z" }];
+    }
+  });
+  const restored = await progress.getActivityState("foundations-test", "1.0.0");
+  assert.deepEqual(restored.state, { responses: { Q1: "a" } });
+  await progress.saveActivityState("foundations-test", "1.0.0", { responses: { Q1: "b" } });
+  assert.equal(calls[0][0], "get");
+  assert.equal(calls[1][0], "save");
+  assert.equal(calls[1][1].p_state?.responses?.Q1 || calls[1][1].state.responses.Q1, "b");
 });

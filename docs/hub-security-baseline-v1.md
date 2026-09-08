@@ -13,6 +13,7 @@ Hubs that pin this baseline:
 - scoring is server-authoritative
 - published versions are immutable
 - client-side state is not authoritative
+- authenticated in-progress activity state is persisted server-side and restored across sessions and devices; browser storage is cache, resilience, or unauthenticated fallback only
 - hubs conform to the shared Hub Security Baseline rather than inventing a parallel security model
 - authored teaching HTML is rendered through the shared refuse-list renderer
 - activity versions used for submission come from published catalogue metadata

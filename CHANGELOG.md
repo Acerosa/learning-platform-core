@@ -4,6 +4,12 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## [Unreleased]
 
+### Added
+
+- Authenticated in-progress activity state through `platform.progress.getActivityState`,
+  `saveActivityState`, `clearActivityState` and `createStore`. Server state is
+  authoritative. Browser storage is cache, resilience, or unauthenticated fallback.
+
 ## 0.2.8 - 2026-09-07
 
 ### Changed

@@ -84,13 +84,16 @@ const ADVANCED_EXPORTS = Object.freeze([
   "createPlatformState",
   "createProfileService",
   "createProgressService",
+  "createActivityStateStore",
   "createSessionService",
   "createSubmissionService",
   "createSupabaseClient",
   "derivePlatformState",
   "mapPlatformError",
+  "reconcileActivityState",
   "redact",
   "resolveAuthRedirectUrl",
+  "sanitizeActivityState",
   "toApiResponse"
 ].sort());
 

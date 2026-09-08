@@ -94,6 +94,9 @@ The internal learner API adapter fixes the schema to `api` and exposes named ope
 - `getAttempts(activityKey)`
 - `getResponses(activityKey)`
 - `getProgress(activityKey)`
+- `getActivityState(activityKey, activityVersion)`
+- `saveActivityState(activityKey, activityVersion, state)`
+- `clearActivityState(activityKey, activityVersion)`
 - `getRegistrationOptions()`
 - `completeOnboarding(payload)`
 - `submitAttempt(payload)`
