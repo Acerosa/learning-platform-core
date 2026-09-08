@@ -223,7 +223,7 @@ Security: assignments come from approved learner-scoped API views. A hub must no
 
 Authenticated learner in-progress activity state is persisted server-side and restored across browser sessions and devices. Browser storage may only be used as cache, resilience, or unauthenticated fallback. Drafts are not official attempts, scores, or derived progress.
 
-Lifecycle: call after authentication. Hydrate before rendering an unfinished activity. Save on meaningful answer changes (debounced for text). Clear or rely on `submit_attempt` after a successful final submission.
+Lifecycle: call after authentication. Hydrate before rendering an unfinished activity. Persist the latest checked response immediately on Check. Debounced local/remote cache is allowed for text drafts before Check. Question retry replaces the current response for that question and does not create an attempt. `submit_attempt` remains the only official completion. `clearActivityState` is for explicit reset, not for Check or retry.
 
 Security: results from `getProgress` / `getAttempts` are backend authority. Local browser draft state must not be merged into authoritative completion, attempts or scores. Draft payloads must not contain marks, scores, answer keys or learner identity fields.
 

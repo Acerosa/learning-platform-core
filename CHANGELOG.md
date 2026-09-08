@@ -4,6 +4,16 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## [Unreleased]
 
+## 0.2.11 - 2026-09-08
+
+### Fixed
+
+- Checked in-progress drafts always upsert through `saveActivityState`. Practice
+  `completed` flags, official `submission.status = submitted`, and result objects
+  no longer skip the server save or call `clearActivityState`. Question retry
+  replaces the current response map. Explicit `store.clear()` remains the reset
+  path. Browser cache with `{ remote: false }` still stays local.
+
 ## 0.2.10 - 2026-09-08
 
 ### Added
