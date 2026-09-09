@@ -22,7 +22,10 @@ var DEFAULT_MESSAGES = Object.freeze({
 var CODE_MESSAGES = Object.freeze({
   invalid_credentials: "Email or password is incorrect.",
   email_not_confirmed: "Confirm your email before signing in.",
-  over_email_send_rate_limit: "Too many account emails have been requested. Please wait a few minutes and try again."
+  over_email_send_rate_limit: "Too many account emails have been requested. Please wait a few minutes and try again.",
+  user_already_exists: "An account with this email already exists. Sign in with your existing email and password.",
+  email_exists: "An account with this email already exists. Sign in with your existing email and password.",
+  invalid_class_key: "Could not join your class. Check the registration key and try again."
 });
 var OPERATION_MESSAGES = Object.freeze({
   "sign-in": "We couldn't sign you in. Please try again.",
@@ -314,6 +317,7 @@ function createLearnerApi({ client, schema = "api", logger } = {}) {
     }),
     getRegistrationOptions: () => rpc("registration_options"),
     completeOnboarding: (payload) => rpc("complete_learner_onboarding", payload),
+    joinLearnerHubGroup: (payload) => rpc("join_learner_hub_group", payload),
     submitAttempt: (payload) => rpc("submit_attempt", payload),
     markFormativeResponse: (payload) => rpc("mark_formative_response", payload),
     getPublishedCurriculum: () => rpc("published_curriculum"),
@@ -456,8 +460,16 @@ function createAuthService({ client, logger, resolveRedirectUrl, cleanAuthCallba
       const result = await client.auth.signUp(payload);
       if (result.error) throw result.error;
       const session = result.data?.session || null;
+      const user = result.data?.user || null;
+      const identities = Array.isArray(user?.identities) ? user.identities : null;
+      const existingAccount = Boolean(user) && !session && Array.isArray(identities) && identities.length === 0;
       publish({ status: session ? "authenticated" : "signed-out", session, error: null });
-      return Object.freeze({ user: result.data?.user || null, session, needsConfirmation: !session });
+      return Object.freeze({
+        user,
+        session,
+        needsConfirmation: !session && !existingAccount,
+        existingAccount
+      });
     } catch (error) {
       const mapped = mapPlatformError(error, { operation: "sign-up", category: "authentication" });
       publish({ status: "signed-out", session: null, error: mapped });
@@ -588,17 +600,79 @@ function createLearnerContext({ authService, profileService, enrolmentService } 
   });
 }
 
+// src/core/hub-access/hub-access-service.js
+var ENROLLED_STATUSES = Object.freeze([
+  "enrolled",
+  "enrolled_created",
+  "enrolled_reactivated"
+]);
+function clean2(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+function isHubEnrolledStatus(status) {
+  return ENROLLED_STATUSES.includes(clean2(status));
+}
+function mapAccess(row) {
+  if (!row || typeof row !== "object") {
+    return Object.freeze({
+      status: "no_enrolment",
+      idempotent: true,
+      academicYear: "",
+      yearGroup: "",
+      courseTitle: "",
+      groupCode: "",
+      groupName: "",
+      enrolmentStatus: "",
+      registrationOption: ""
+    });
+  }
+  return Object.freeze({
+    status: clean2(row.status) || "no_enrolment",
+    idempotent: row.idempotent !== false,
+    academicYear: clean2(row.academic_year ?? row.academicYear),
+    yearGroup: clean2(row.year_group ?? row.yearGroup),
+    courseTitle: clean2(row.course_title ?? row.courseTitle),
+    groupCode: clean2(row.group_code ?? row.groupCode),
+    groupName: clean2(row.group_name ?? row.groupName),
+    enrolmentStatus: clean2(row.enrolment_status ?? row.enrolmentStatus),
+    registrationOption: clean2(row.registration_option ?? row.registrationOption)
+  });
+}
+function createHubAccessService({ api, hubCode, courseKey } = {}) {
+  async function resolve() {
+    const rows = await api.resolveLearnerHubAccess({
+      p_hub_code: hubCode,
+      p_course_key: courseKey
+    });
+    const row = Array.isArray(rows) ? rows[0] : rows;
+    return mapAccess(row);
+  }
+  async function join(classKey) {
+    const rows = await api.joinLearnerHubGroup({
+      p_hub_code: hubCode,
+      p_class_key: clean2(classKey)
+    });
+    const row = Array.isArray(rows) ? rows[0] : rows;
+    return mapAccess(row);
+  }
+  return Object.freeze({
+    resolve,
+    join,
+    isEnrolled: isHubEnrolledStatus
+  });
+}
+
 // src/core/onboarding/onboarding-service.js
 var SAFE_PENDING_FIELDS = Object.freeze(["firstName", "surname", "studentNumber", "registrationKey"]);
 var EMAIL_PATTERN = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
-function clean2(value) {
+function clean3(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 function validateProfile(details = {}) {
   const value = {
-    firstName: clean2(details.firstName),
-    surname: clean2(details.surname),
-    studentNumber: clean2(details.studentNumber)
+    firstName: clean3(details.firstName),
+    surname: clean3(details.surname),
+    studentNumber: clean3(details.studentNumber)
   };
   if (!value.firstName || value.firstName.length > 100) return { ok: false, code: "INVALID_FIRST_NAME" };
   if (!value.surname || value.surname.length > 100) return { ok: false, code: "INVALID_SURNAME" };
@@ -606,7 +680,7 @@ function validateProfile(details = {}) {
   return { ok: true, value };
 }
 function validateEmail(email) {
-  const value = clean2(email);
+  const value = clean3(email);
   if (!EMAIL_PATTERN.test(value)) return { ok: false, code: "INVALID_EMAIL" };
   return { ok: true, value };
 }
@@ -622,7 +696,7 @@ function createOnboardingService({ api, authService, learnerContext, storage = g
     const checked = validateProfile(details);
     if (!checked.ok) throw new PlatformError({ code: checked.code, category: "validation" });
     const pending = { ...checked.value };
-    if (clean2(details.registrationKey)) pending.registrationKey = clean2(details.registrationKey);
+    if (clean3(details.registrationKey)) pending.registrationKey = clean3(details.registrationKey);
     return Object.freeze(pending);
   }
   function savePending(details) {
@@ -656,52 +730,54 @@ function createOnboardingService({ api, authService, learnerContext, storage = g
       throw new PlatformError({ code: "AUTH_REQUIRED", category: "authentication" });
     }
   }
-  function mapOptions(rows) {
-    return Object.freeze((Array.isArray(rows) ? rows : []).map((row) => Object.freeze({
-      registrationKey: clean2(row.registration_option ?? row.registrationKey),
-      academicYear: clean2(row.academic_year ?? row.academicYear),
-      yearGroup: clean2(row.year_group ?? row.yearGroup),
-      courseTitle: clean2(row.course_title ?? row.courseTitle),
-      groupCode: clean2(row.group_code ?? row.groupCode),
-      groupName: clean2(row.group_name ?? row.groupName)
-    })).filter((option) => option.registrationKey && option.yearGroup));
-  }
   async function getRegistrationOptions() {
     requireSession();
-    if (hubAccessService) {
-      const access = await hubAccessService.resolve();
-      if (access.registrationOption) {
-        return mapOptions([{
-          registration_option: access.registrationOption,
-          academic_year: access.academicYear,
-          year_group: access.yearGroup || "Year group",
-          course_title: access.courseTitle,
-          group_code: access.groupCode,
-          group_name: access.groupName
-        }]);
-      }
-      return Object.freeze([]);
-    }
-    return mapOptions(await api.getRegistrationOptions());
+    return Object.freeze([]);
   }
-  async function complete(details, registrationKey) {
+  async function complete(details) {
     requireSession();
     const checked = validateProfile(details);
-    const key = clean2(registrationKey);
     if (!checked.ok) throw new PlatformError({ code: checked.code, category: "validation" });
-    if (!key) throw new PlatformError({ code: "INVALID_REGISTRATION_OPTION", category: "validation" });
     try {
       const result = await api.completeOnboarding({
         p_first_name: checked.value.firstName,
         p_surname: checked.value.surname,
         p_student_number: checked.value.studentNumber,
-        p_registration_option: key
+        p_registration_option: ""
       });
       clearPending();
       await learnerContext?.refresh?.();
+      if (hubAccessService) {
+        const access = await hubAccessService.resolve();
+        if (isHubEnrolledStatus(access.status) && access.groupCode) {
+          await learnerContext?.refresh?.({ preferredGroupCode: access.groupCode });
+        }
+      }
       return Array.isArray(result) ? result[0] : result;
     } catch (error) {
       throw mapPlatformError(error, { operation: "complete-onboarding" });
+    }
+  }
+  async function joinClass(classKey) {
+    requireSession();
+    const key = clean3(classKey);
+    if (!key) throw new PlatformError({ code: "INVALID_CLASS_KEY", category: "validation" });
+    if (!hubAccessService?.join) {
+      throw new PlatformError({
+        code: "JOIN_CLASS_UNAVAILABLE",
+        category: "configuration",
+        learnerMessage: "Join class is unavailable right now. Try again shortly."
+      });
+    }
+    try {
+      const access = await hubAccessService.join(key);
+      await learnerContext?.refresh?.({ preferredGroupCode: access.groupCode || void 0 });
+      return access;
+    } catch (error) {
+      throw mapPlatformError(error, {
+        operation: "join-class",
+        learnerMessage: "Could not join your class. Check the registration key and try again."
+      });
     }
   }
   return Object.freeze({
@@ -713,6 +789,7 @@ function createOnboardingService({ api, authService, learnerContext, storage = g
     clearPending,
     getRegistrationOptions,
     complete,
+    joinClass,
     pendingKey
   });
 }
@@ -733,59 +810,6 @@ function createAssignmentService(api) {
     getAssignments: () => api.getAssignments(),
     getHubAssignments: (hubCode) => api.getHubAssignments(hubCode),
     getCurriculumDelivery: () => api.getCurriculumDelivery()
-  });
-}
-
-// src/core/hub-access/hub-access-service.js
-var ENROLLED_STATUSES = Object.freeze([
-  "enrolled",
-  "enrolled_created",
-  "enrolled_reactivated"
-]);
-function clean3(value) {
-  return typeof value === "string" ? value.trim() : "";
-}
-function isHubEnrolledStatus(status) {
-  return ENROLLED_STATUSES.includes(clean3(status));
-}
-function mapAccess(row) {
-  if (!row || typeof row !== "object") {
-    return Object.freeze({
-      status: "no_enrolment",
-      idempotent: true,
-      academicYear: "",
-      yearGroup: "",
-      courseTitle: "",
-      groupCode: "",
-      groupName: "",
-      enrolmentStatus: "",
-      registrationOption: ""
-    });
-  }
-  return Object.freeze({
-    status: clean3(row.status) || "no_enrolment",
-    idempotent: row.idempotent !== false,
-    academicYear: clean3(row.academic_year ?? row.academicYear),
-    yearGroup: clean3(row.year_group ?? row.yearGroup),
-    courseTitle: clean3(row.course_title ?? row.courseTitle),
-    groupCode: clean3(row.group_code ?? row.groupCode),
-    groupName: clean3(row.group_name ?? row.groupName),
-    enrolmentStatus: clean3(row.enrolment_status ?? row.enrolmentStatus),
-    registrationOption: clean3(row.registration_option ?? row.registrationOption)
-  });
-}
-function createHubAccessService({ api, hubCode, courseKey } = {}) {
-  async function resolve() {
-    const rows = await api.resolveLearnerHubAccess({
-      p_hub_code: hubCode,
-      p_course_key: courseKey
-    });
-    const row = Array.isArray(rows) ? rows[0] : rows;
-    return mapAccess(row);
-  }
-  return Object.freeze({
-    resolve,
-    isEnrolled: isHubEnrolledStatus
   });
 }
 

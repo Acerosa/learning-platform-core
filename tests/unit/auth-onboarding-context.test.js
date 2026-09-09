@@ -34,6 +34,7 @@ test("sign up reports the email-confirmation boundary without storing credential
   });
   const result = await auth.signUp("learner@example.test", "password-123");
   assert.equal(result.needsConfirmation, true);
+  assert.equal(result.existingAccount, false);
   assert.deepEqual(client.calls.find((call) => call.type === "sign-up").credentials, {
     email: "learner@example.test",
     password: "password-123",
@@ -91,7 +92,7 @@ test("onboarding pending state preserves leading zeroes but excludes email and p
   assert.equal(raw.includes("never-store-this"), false);
 });
 
-test("onboarding uses controlled registration options and the approved RPC arguments", async () => {
+test("onboarding completes a profile without a learner-chosen group", async () => {
   let payload = null;
   let refreshed = false;
   const service = createOnboardingService({
@@ -104,13 +105,13 @@ test("onboarding uses controlled registration options and the approved RPC argum
     storage: memoryStorage()
   });
   const options = await service.getRegistrationOptions();
-  assert.equal(options[0].registrationKey, "year-1-a");
-  await service.complete({ firstName: "Ada", surname: "Lovelace", studentNumber: "000123" }, "year-1-a");
+  assert.deepEqual(options, []);
+  await service.complete({ firstName: "Ada", surname: "Lovelace", studentNumber: "000123" });
   assert.deepEqual(payload, {
     p_first_name: "Ada",
     p_surname: "Lovelace",
     p_student_number: "000123",
-    p_registration_option: "year-1-a"
+    p_registration_option: ""
   });
   assert.equal(refreshed, true);
 });

@@ -22,7 +22,10 @@ var DEFAULT_MESSAGES = Object.freeze({
 var CODE_MESSAGES = Object.freeze({
   invalid_credentials: "Email or password is incorrect.",
   email_not_confirmed: "Confirm your email before signing in.",
-  over_email_send_rate_limit: "Too many account emails have been requested. Please wait a few minutes and try again."
+  over_email_send_rate_limit: "Too many account emails have been requested. Please wait a few minutes and try again.",
+  user_already_exists: "An account with this email already exists. Sign in with your existing email and password.",
+  email_exists: "An account with this email already exists. Sign in with your existing email and password.",
+  invalid_class_key: "Could not join your class. Check the registration key and try again."
 });
 var OPERATION_MESSAGES = Object.freeze({
   "sign-in": "We couldn't sign you in. Please try again.",
@@ -432,6 +435,7 @@ function createLearnerApi({ client, schema = "api", logger } = {}) {
     }),
     getRegistrationOptions: () => rpc("registration_options"),
     completeOnboarding: (payload) => rpc("complete_learner_onboarding", payload),
+    joinLearnerHubGroup: (payload) => rpc("join_learner_hub_group", payload),
     submitAttempt: (payload) => rpc("submit_attempt", payload),
     markFormativeResponse: (payload) => rpc("mark_formative_response", payload),
     getPublishedCurriculum: () => rpc("published_curriculum"),
@@ -574,8 +578,16 @@ function createAuthService({ client, logger, resolveRedirectUrl, cleanAuthCallba
       const result2 = await client.auth.signUp(payload);
       if (result2.error) throw result2.error;
       const session = result2.data?.session || null;
+      const user = result2.data?.user || null;
+      const identities = Array.isArray(user?.identities) ? user.identities : null;
+      const existingAccount = Boolean(user) && !session && Array.isArray(identities) && identities.length === 0;
       publish({ status: session ? "authenticated" : "signed-out", session, error: null });
-      return Object.freeze({ user: result2.data?.user || null, session, needsConfirmation: !session });
+      return Object.freeze({
+        user,
+        session,
+        needsConfirmation: !session && !existingAccount,
+        existingAccount
+      });
     } catch (error) {
       const mapped = mapPlatformError(error, { operation: "sign-up", category: "authentication" });
       publish({ status: "signed-out", session: null, error: mapped });
@@ -682,8 +694,17 @@ function createHubAccessService({ api, hubCode, courseKey } = {}) {
     const row = Array.isArray(rows) ? rows[0] : rows;
     return mapAccess(row);
   }
+  async function join(classKey) {
+    const rows = await api.joinLearnerHubGroup({
+      p_hub_code: hubCode,
+      p_class_key: clean(classKey)
+    });
+    const row = Array.isArray(rows) ? rows[0] : rows;
+    return mapAccess(row);
+  }
   return Object.freeze({
     resolve,
+    join,
     isEnrolled: isHubEnrolledStatus
   });
 }
@@ -1250,52 +1271,54 @@ function createOnboardingService({ api, authService, learnerContext, storage = g
       throw new PlatformError({ code: "AUTH_REQUIRED", category: "authentication" });
     }
   }
-  function mapOptions(rows) {
-    return Object.freeze((Array.isArray(rows) ? rows : []).map((row) => Object.freeze({
-      registrationKey: clean3(row.registration_option ?? row.registrationKey),
-      academicYear: clean3(row.academic_year ?? row.academicYear),
-      yearGroup: clean3(row.year_group ?? row.yearGroup),
-      courseTitle: clean3(row.course_title ?? row.courseTitle),
-      groupCode: clean3(row.group_code ?? row.groupCode),
-      groupName: clean3(row.group_name ?? row.groupName)
-    })).filter((option) => option.registrationKey && option.yearGroup));
-  }
   async function getRegistrationOptions() {
     requireSession();
-    if (hubAccessService) {
-      const access = await hubAccessService.resolve();
-      if (access.registrationOption) {
-        return mapOptions([{
-          registration_option: access.registrationOption,
-          academic_year: access.academicYear,
-          year_group: access.yearGroup || "Year group",
-          course_title: access.courseTitle,
-          group_code: access.groupCode,
-          group_name: access.groupName
-        }]);
-      }
-      return Object.freeze([]);
-    }
-    return mapOptions(await api.getRegistrationOptions());
+    return Object.freeze([]);
   }
-  async function complete(details, registrationKey) {
+  async function complete(details) {
     requireSession();
     const checked = validateProfile(details);
-    const key = clean3(registrationKey);
     if (!checked.ok) throw new PlatformError({ code: checked.code, category: "validation" });
-    if (!key) throw new PlatformError({ code: "INVALID_REGISTRATION_OPTION", category: "validation" });
     try {
       const result2 = await api.completeOnboarding({
         p_first_name: checked.value.firstName,
         p_surname: checked.value.surname,
         p_student_number: checked.value.studentNumber,
-        p_registration_option: key
+        p_registration_option: ""
       });
       clearPending();
       await learnerContext?.refresh?.();
+      if (hubAccessService) {
+        const access = await hubAccessService.resolve();
+        if (isHubEnrolledStatus(access.status) && access.groupCode) {
+          await learnerContext?.refresh?.({ preferredGroupCode: access.groupCode });
+        }
+      }
       return Array.isArray(result2) ? result2[0] : result2;
     } catch (error) {
       throw mapPlatformError(error, { operation: "complete-onboarding" });
+    }
+  }
+  async function joinClass(classKey) {
+    requireSession();
+    const key = clean3(classKey);
+    if (!key) throw new PlatformError({ code: "INVALID_CLASS_KEY", category: "validation" });
+    if (!hubAccessService?.join) {
+      throw new PlatformError({
+        code: "JOIN_CLASS_UNAVAILABLE",
+        category: "configuration",
+        learnerMessage: "Join class is unavailable right now. Try again shortly."
+      });
+    }
+    try {
+      const access = await hubAccessService.join(key);
+      await learnerContext?.refresh?.({ preferredGroupCode: access.groupCode || void 0 });
+      return access;
+    } catch (error) {
+      throw mapPlatformError(error, {
+        operation: "join-class",
+        learnerMessage: "Could not join your class. Check the registration key and try again."
+      });
     }
   }
   return Object.freeze({
@@ -1307,6 +1330,7 @@ function createOnboardingService({ api, authService, learnerContext, storage = g
     clearPending,
     getRegistrationOptions,
     complete,
+    joinClass,
     pendingKey
   });
 }
@@ -2873,20 +2897,6 @@ function createModal({ document = globalThis.document, id = "lp-dialog", title =
   });
 }
 
-// src/ui/loading/loading-state.js
-function createLoadingState({ document = globalThis.document, message = "Loading\u2026" } = {}) {
-  const element = createElement(document, "div", {
-    className: "lp-loading",
-    role: "status",
-    "aria-live": "polite"
-  });
-  element.append(
-    createElement(document, "span", { className: "lp-loading__spinner", "aria-hidden": "true" }),
-    createElement(document, "span", { text: message })
-  );
-  return element;
-}
-
 // src/ui/onboarding/onboarding-view.js
 function createOnboardingView({
   document = globalThis.document,
@@ -2896,59 +2906,21 @@ function createOnboardingView({
 } = {}) {
   const element = createElement(document, "section", { "aria-labelledby": "lp-onboarding-title" });
   const heading = createElement(document, "h3", { id: "lp-onboarding-title", text: "Finish setting up your learner account" });
-  const intro = createElement(document, "p", { text: "Enter your learner details, then choose an available course and group." });
+  const intro = createElement(document, "p", { text: "Enter your learner details to finish setting up your account." });
   const form = createElement(document, "form", { className: "lp-form" });
   const firstName = formField(document, { id: "lp-onboarding-first-name", label: "First name", autocomplete: "given-name" });
   const surname = formField(document, { id: "lp-onboarding-surname", label: "Surname", autocomplete: "family-name" });
   const studentNumber = formField(document, { id: "lp-onboarding-student-number", label: "Student ID", autocomplete: "off" });
-  const optionWrapper = createElement(document, "div", { className: "lp-form__field" });
-  const optionLabel = createElement(document, "label", { htmlFor: "lp-registration-option", text: "Year and group" });
-  const select = createElement(document, "select", { id: "lp-registration-option", name: "registrationOption", required: true });
-  optionWrapper.append(optionLabel, select);
   const status = createElement(document, "p", { role: "status", "aria-live": "polite", tabIndex: -1 });
   const submit = createElement(document, "button", { className: "lp-button", type: "submit", text: "Complete setup" });
   const actions = createElement(document, "div", { className: "lp-form__actions" }, submit);
-  form.append(firstName.wrapper, surname.wrapper, studentNumber.wrapper, optionWrapper, status, actions);
+  form.append(firstName.wrapper, surname.wrapper, studentNumber.wrapper, status, actions);
   element.append(heading, intro, form);
   const pending = onboardingService.getPending();
   if (pending) {
     firstName.input.value = pending.firstName || "";
     surname.input.value = pending.surname || "";
     studentNumber.input.value = pending.studentNumber || "";
-  }
-  async function load() {
-    submit.disabled = true;
-    optionWrapper.replaceChildren(createLoadingState({ document, message: "Loading available groups\u2026" }));
-    try {
-      const options2 = await onboardingService.getRegistrationOptions();
-      optionWrapper.replaceChildren(optionLabel, select);
-      if (options2.length === 1) {
-        select.replaceChildren(createElement(document, "option", {
-          value: options2[0].registrationKey,
-          text: [options2[0].yearGroup, options2[0].groupName || options2[0].groupCode, options2[0].courseTitle].filter(Boolean).join(" \u2014 ")
-        }));
-        select.value = options2[0].registrationKey;
-        select.required = false;
-        optionWrapper.hidden = true;
-        intro.textContent = "Enter your learner details to finish setting up your account.";
-        submit.disabled = false;
-        return;
-      }
-      optionWrapper.hidden = false;
-      select.required = true;
-      select.replaceChildren(createElement(document, "option", { value: "", text: "Choose a year and group" }));
-      options2.forEach((option) => {
-        const label = [option.yearGroup, option.groupName || option.groupCode, option.courseTitle].filter(Boolean).join(" \u2014 ");
-        select.append(createElement(document, "option", { value: option.registrationKey, text: label }));
-      });
-      select.value = pending?.registrationKey || "";
-      submit.disabled = options2.length === 0;
-      if (options2.length === 0) status.textContent = "No registration options are available. Contact your tutor.";
-    } catch (error) {
-      optionWrapper.replaceChildren(optionLabel, select);
-      status.setAttribute("role", "alert");
-      status.textContent = error?.learnerMessage || "Registration options could not be loaded. Try again.";
-    }
   }
   async function handleSubmit(event) {
     event.preventDefault();
@@ -2961,7 +2933,7 @@ function createOnboardingView({
       studentNumber: studentNumber.input.value
     };
     try {
-      await onboardingService.complete(details, select.value);
+      await onboardingService.complete(details);
       status.textContent = "Your learner account is ready.";
       await onComplete();
     } catch (error) {
@@ -2972,8 +2944,7 @@ function createOnboardingView({
     }
   }
   form.addEventListener("submit", handleSubmit);
-  load();
-  return Object.freeze({ element, load, destroy() {
+  return Object.freeze({ element, destroy() {
     form.removeEventListener("submit", handleSubmit);
     element.remove();
   } });
@@ -3080,10 +3051,16 @@ function createAccountDialog({
           onboardingService.savePending(details);
           const result2 = await authService.signUp(accountCheck.value.email, accountCheck.value.password);
           password.input.value = "";
+          if (result2.existingAccount) {
+            setMode("sign-in");
+            email.input.value = accountCheck.value.email;
+            status.textContent = "An account with this email already exists. Sign in with your existing email and password.";
+            return;
+          }
           if (result2.needsConfirmation) {
             setMode("sign-in");
             email.input.value = accountCheck.value.email;
-            status.textContent = "Check your email to confirm the account, then return here and sign in.";
+            status.textContent = "If this is a new email address, check your inbox to confirm the account, then return here and sign in.";
             return;
           }
           await continueAfterAuthentication();
@@ -3118,7 +3095,9 @@ function createAccountDialog({
       WEAK_PASSWORD: "Choose a password with at least 8 characters.",
       INVALID_FIRST_NAME: "Enter your first name.",
       INVALID_SURNAME: "Enter your last name.",
-      INVALID_STUDENT_NUMBER: "Enter your Student ID."
+      INVALID_STUDENT_NUMBER: "Enter your Student ID.",
+      user_already_exists: "An account with this email already exists. Sign in with your existing email and password.",
+      email_exists: "An account with this email already exists. Sign in with your existing email and password."
     };
     return messages[code] || "The account request could not be completed. Check your details and try again.";
   }
@@ -3167,6 +3146,20 @@ function createToastRegion({ document = globalThis.document, timeoutMs = 6e3 } =
     return () => toast.remove();
   }
   return Object.freeze({ element, notify, clear: () => element.replaceChildren() });
+}
+
+// src/ui/loading/loading-state.js
+function createLoadingState({ document = globalThis.document, message = "Loading\u2026" } = {}) {
+  const element = createElement(document, "div", {
+    className: "lp-loading",
+    role: "status",
+    "aria-live": "polite"
+  });
+  element.append(
+    createElement(document, "span", { className: "lp-loading__spinner", "aria-hidden": "true" }),
+    createElement(document, "span", { text: message })
+  );
+  return element;
 }
 
 // src/ui/errors/error-banner.js

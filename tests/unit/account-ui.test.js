@@ -99,7 +99,7 @@ test("account dialog keeps sign-in and registration distinct and persists no cre
   assert.equal(pending.includes("000123"), true);
   assert.equal(pending.includes("ada@example.test"), false);
   assert.equal(pending.includes("password-123"), false);
-  assert.match(account.element.textContent, /Check your email to confirm/i);
+  assert.match(account.element.textContent, /If this is a new email address, check your inbox to confirm/i);
   assert.deepEqual(calls.at(-1), { type: "sign-up", email: "ada@example.test", password: "password-123" });
 
   tabs.find((tab) => tab.textContent === "Sign in").click();
@@ -225,6 +225,40 @@ test("account validation accepts a password without a confirmation field", () =>
   );
   assert.deepEqual(service.validateEmail("ada@example.test"), { ok: true, value: "ada@example.test" });
   assert.deepEqual(service.validateEmail("00012345"), { ok: false, code: "INVALID_EMAIL" });
+});
+
+test("repeated signup for an existing email asks the learner to sign in", async () => {
+  const runtimeCalls = [];
+  const service = {
+    isSignedIn: () => false,
+    signIn: async () => {},
+    signUp: async (email, password) => {
+      runtimeCalls.push({ type: "sign-up", email, password });
+      return {
+        user: { id: "auth-user", identities: [] },
+        session: null,
+        needsConfirmation: false,
+        existingAccount: true
+      };
+    }
+  };
+  const { account, runtime } = openAccount({ authService: service });
+  Array.from(account.element.querySelectorAll('[role="tab"]'))
+    .find((tab) => tab.textContent === "Create account")
+    .click();
+  account.element.querySelector("#lp-register-first-name").value = "Ada";
+  account.element.querySelector("#lp-register-surname").value = "Lovelace";
+  account.element.querySelector("#lp-register-student-number").value = "000123";
+  account.element.querySelector("#lp-account-email").value = "ada@example.test";
+  account.element.querySelector("#lp-account-password").value = "password-123";
+  account.element.querySelector("form").dispatchEvent(new runtime.window.Event("submit", { bubbles: true, cancelable: true }));
+  await flush();
+  assert.match(
+    account.element.querySelector(".lp-form__status").textContent,
+    /An account with this email already exists/i
+  );
+  assert.equal(account.element.querySelector(".lp-form__status").textContent.includes("Check your email"), false);
+  assert.deepEqual(runtimeCalls, [{ type: "sign-up", email: "ada@example.test", password: "password-123" }]);
 });
 
 test("mapped auth errors remain PlatformError instances for logging", async () => {

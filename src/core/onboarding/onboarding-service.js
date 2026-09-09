@@ -1,4 +1,5 @@
 import { PlatformError, mapPlatformError } from "../errors/platform-error.js";
+import { isHubEnrolledStatus } from "../hub-access/hub-access-service.js";
 
 const SAFE_PENDING_FIELDS = Object.freeze(["firstName", "surname", "studentNumber", "registrationKey"]);
 const EMAIL_PATTERN = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
@@ -71,54 +72,56 @@ export function createOnboardingService({ api, authService, learnerContext, stor
     }
   }
 
-  function mapOptions(rows) {
-    return Object.freeze((Array.isArray(rows) ? rows : []).map((row) => Object.freeze({
-      registrationKey: clean(row.registration_option ?? row.registrationKey),
-      academicYear: clean(row.academic_year ?? row.academicYear),
-      yearGroup: clean(row.year_group ?? row.yearGroup),
-      courseTitle: clean(row.course_title ?? row.courseTitle),
-      groupCode: clean(row.group_code ?? row.groupCode),
-      groupName: clean(row.group_name ?? row.groupName)
-    })).filter((option) => option.registrationKey && option.yearGroup));
-  }
-
   async function getRegistrationOptions() {
     requireSession();
-    if (hubAccessService) {
-      const access = await hubAccessService.resolve();
-      if (access.registrationOption) {
-        return mapOptions([{
-          registration_option: access.registrationOption,
-          academic_year: access.academicYear,
-          year_group: access.yearGroup || "Year group",
-          course_title: access.courseTitle,
-          group_code: access.groupCode,
-          group_name: access.groupName
-        }]);
-      }
-      return Object.freeze([]);
-    }
-    return mapOptions(await api.getRegistrationOptions());
+    return Object.freeze([]);
   }
 
-  async function complete(details, registrationKey) {
+  async function complete(details) {
     requireSession();
     const checked = validateProfile(details);
-    const key = clean(registrationKey);
     if (!checked.ok) throw new PlatformError({ code: checked.code, category: "validation" });
-    if (!key) throw new PlatformError({ code: "INVALID_REGISTRATION_OPTION", category: "validation" });
     try {
       const result = await api.completeOnboarding({
         p_first_name: checked.value.firstName,
         p_surname: checked.value.surname,
         p_student_number: checked.value.studentNumber,
-        p_registration_option: key
+        p_registration_option: ""
       });
       clearPending();
       await learnerContext?.refresh?.();
+      if (hubAccessService) {
+        const access = await hubAccessService.resolve();
+        if (isHubEnrolledStatus(access.status) && access.groupCode) {
+          await learnerContext?.refresh?.({ preferredGroupCode: access.groupCode });
+        }
+      }
       return Array.isArray(result) ? result[0] : result;
     } catch (error) {
       throw mapPlatformError(error, { operation: "complete-onboarding" });
+    }
+  }
+
+  async function joinClass(classKey) {
+    requireSession();
+    const key = clean(classKey);
+    if (!key) throw new PlatformError({ code: "INVALID_CLASS_KEY", category: "validation" });
+    if (!hubAccessService?.join) {
+      throw new PlatformError({
+        code: "JOIN_CLASS_UNAVAILABLE",
+        category: "configuration",
+        learnerMessage: "Join class is unavailable right now. Try again shortly."
+      });
+    }
+    try {
+      const access = await hubAccessService.join(key);
+      await learnerContext?.refresh?.({ preferredGroupCode: access.groupCode || undefined });
+      return access;
+    } catch (error) {
+      throw mapPlatformError(error, {
+        operation: "join-class",
+        learnerMessage: "Could not join your class. Check the registration key and try again."
+      });
     }
   }
 
@@ -131,6 +134,7 @@ export function createOnboardingService({ api, authService, learnerContext, stor
     clearPending,
     getRegistrationOptions,
     complete,
+    joinClass,
     pendingKey
   });
 }

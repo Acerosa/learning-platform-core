@@ -49,8 +49,18 @@ export function createHubAccessService({ api, hubCode, courseKey } = {}) {
     return mapAccess(row);
   }
 
+  async function join(classKey) {
+    const rows = await api.joinLearnerHubGroup({
+      p_hub_code: hubCode,
+      p_class_key: clean(classKey)
+    });
+    const row = Array.isArray(rows) ? rows[0] : rows;
+    return mapAccess(row);
+  }
+
   return Object.freeze({
     resolve,
+    join,
     isEnrolled: isHubEnrolledStatus
   });
 }

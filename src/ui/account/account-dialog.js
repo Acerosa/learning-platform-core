@@ -109,10 +109,16 @@ export function createAccountDialog({
           onboardingService.savePending(details);
           const result = await authService.signUp(accountCheck.value.email, accountCheck.value.password);
           password.input.value = "";
+          if (result.existingAccount) {
+            setMode("sign-in");
+            email.input.value = accountCheck.value.email;
+            status.textContent = "An account with this email already exists. Sign in with your existing email and password.";
+            return;
+          }
           if (result.needsConfirmation) {
             setMode("sign-in");
             email.input.value = accountCheck.value.email;
-            status.textContent = "Check your email to confirm the account, then return here and sign in.";
+            status.textContent = "If this is a new email address, check your inbox to confirm the account, then return here and sign in.";
             return;
           }
           await continueAfterAuthentication();
@@ -149,7 +155,9 @@ export function createAccountDialog({
       WEAK_PASSWORD: "Choose a password with at least 8 characters.",
       INVALID_FIRST_NAME: "Enter your first name.",
       INVALID_SURNAME: "Enter your last name.",
-      INVALID_STUDENT_NUMBER: "Enter your Student ID."
+      INVALID_STUDENT_NUMBER: "Enter your Student ID.",
+      user_already_exists: "An account with this email already exists. Sign in with your existing email and password.",
+      email_exists: "An account with this email already exists. Sign in with your existing email and password."
     };
     return messages[code] || "The account request could not be completed. Check your details and try again.";
   }

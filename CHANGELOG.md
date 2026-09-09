@@ -4,6 +4,17 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## [Unreleased]
 
+## 0.2.14 - 2026-09-09
+
+### Security
+
+- Learner onboarding no longer lets the browser choose group authority.
+  `complete()` sends profile fields only. Open-auto hubs enrol through
+  `resolve_learner_hub_access`. Controlled hubs enrol through `joinClass()` /
+  `api.join_learner_hub_group`. The year/group picker is removed. Repeated
+  signup for an existing email asks the learner to sign in instead of saying a
+  confirmation email was sent. Do not retag `v0.2.13`.
+
 ## 0.2.13 - 2026-09-09
 
 ### Added

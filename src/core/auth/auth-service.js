@@ -78,8 +78,16 @@ export function createAuthService({ client, logger, resolveRedirectUrl, cleanAut
       const result = await client.auth.signUp(payload);
       if (result.error) throw result.error;
       const session = result.data?.session || null;
+      const user = result.data?.user || null;
+      const identities = Array.isArray(user?.identities) ? user.identities : null;
+      const existingAccount = Boolean(user) && !session && Array.isArray(identities) && identities.length === 0;
       publish({ status: session ? "authenticated" : "signed-out", session, error: null });
-      return Object.freeze({ user: result.data?.user || null, session, needsConfirmation: !session });
+      return Object.freeze({
+        user,
+        session,
+        needsConfirmation: !session && !existingAccount,
+        existingAccount
+      });
     } catch (error) {
       const mapped = mapPlatformError(error, { operation: "sign-up", category: "authentication" });
       publish({ status: "signed-out", session: null, error: mapped });
