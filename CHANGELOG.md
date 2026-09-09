@@ -4,6 +4,19 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## [Unreleased]
 
+### Added
+
+- Hub-scoped learner access: `createPlatform()` resolves `api.resolve_learner_hub_access`
+  from `auth.uid()` plus the hub's own code/course key. Readiness no longer treats
+  any active enrolment as enough for the current hub. `enrolled_created` remains
+  a ready status, including when the learner already has an unrelated hub
+  enrolment. After `enrolled_created` or `enrolled_reactivated`, learner context
+  is refreshed so the header and group fields follow the hub enrolment without a
+  page reload. `platform.assignments.getHubAssignments(hubCode)` reads
+  `api.my_hub_assignments`. `getAssignments()` still reads the unscoped
+  `api.my_assignments` compatibility view. Onboarding hides the year/group picker
+  when the hub resolver returns exactly one eligible registration key.
+
 ## 0.2.11 - 2026-09-08
 
 ### Fixed

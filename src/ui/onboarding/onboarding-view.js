@@ -36,6 +36,20 @@ export function createOnboardingView({
     try {
       const options = await onboardingService.getRegistrationOptions();
       optionWrapper.replaceChildren(optionLabel, select);
+      if (options.length === 1) {
+        select.replaceChildren(createElement(document, "option", {
+          value: options[0].registrationKey,
+          text: [options[0].yearGroup, options[0].groupName || options[0].groupCode, options[0].courseTitle].filter(Boolean).join(" — ")
+        }));
+        select.value = options[0].registrationKey;
+        select.required = false;
+        optionWrapper.hidden = true;
+        intro.textContent = "Enter your learner details to finish setting up your account.";
+        submit.disabled = false;
+        return;
+      }
+      optionWrapper.hidden = false;
+      select.required = true;
       select.replaceChildren(createElement(document, "option", { value: "", text: "Choose a year and group" }));
       options.forEach((option) => {
         const label = [option.yearGroup, option.groupName || option.groupCode, option.courseTitle].filter(Boolean).join(" — ");

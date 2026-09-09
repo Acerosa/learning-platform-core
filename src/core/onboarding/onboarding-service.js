@@ -33,7 +33,7 @@ function validateAccount(details = {}) {
   return { ok: true, value: { email: emailCheck.value, password } };
 }
 
-export function createOnboardingService({ api, authService, learnerContext, storage = globalThis.sessionStorage, pendingKey = "learning-platform.pending-onboarding.v1" } = {}) {
+export function createOnboardingService({ api, authService, learnerContext, storage = globalThis.sessionStorage, pendingKey = "learning-platform.pending-onboarding.v1", hubAccessService } = {}) {
   function safePending(details = {}) {
     const checked = validateProfile(details);
     if (!checked.ok) throw new PlatformError({ code: checked.code, category: "validation" });
@@ -71,9 +71,7 @@ export function createOnboardingService({ api, authService, learnerContext, stor
     }
   }
 
-  async function getRegistrationOptions() {
-    requireSession();
-    const rows = await api.getRegistrationOptions();
+  function mapOptions(rows) {
     return Object.freeze((Array.isArray(rows) ? rows : []).map((row) => Object.freeze({
       registrationKey: clean(row.registration_option ?? row.registrationKey),
       academicYear: clean(row.academic_year ?? row.academicYear),
@@ -82,6 +80,25 @@ export function createOnboardingService({ api, authService, learnerContext, stor
       groupCode: clean(row.group_code ?? row.groupCode),
       groupName: clean(row.group_name ?? row.groupName)
     })).filter((option) => option.registrationKey && option.yearGroup));
+  }
+
+  async function getRegistrationOptions() {
+    requireSession();
+    if (hubAccessService) {
+      const access = await hubAccessService.resolve();
+      if (access.registrationOption) {
+        return mapOptions([{
+          registration_option: access.registrationOption,
+          academic_year: access.academicYear,
+          year_group: access.yearGroup || "Year group",
+          course_title: access.courseTitle,
+          group_code: access.groupCode,
+          group_name: access.groupName
+        }]);
+      }
+      return Object.freeze([]);
+    }
+    return mapOptions(await api.getRegistrationOptions());
   }
 
   async function complete(details, registrationKey) {

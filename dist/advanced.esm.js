@@ -262,6 +262,8 @@ function createLearnerApi({ client, schema = "api", logger } = {}) {
     getProfile: async () => (await read("my_profile", { select: "*" }))[0] || null,
     getEnrolments: () => read("my_enrolments", { order: "joined_on" }),
     getAssignments: () => read("my_assignments", { order: "activity_key" }),
+    getHubAssignments: (hubCode) => rpc("my_hub_assignments", { p_hub_code: hubCode }),
+    resolveLearnerHubAccess: (payload) => rpc("resolve_learner_hub_access", payload),
     getCurriculumDelivery: () => read("my_activity_delivery", { order: "sort_order" }),
     getAttempts: (activityKey) => read("my_attempts", {
       order: "received_at",
@@ -522,15 +524,16 @@ function createLearnerContext({ authService, profileService, enrolmentService } 
     listener(state);
     return () => listeners.delete(listener);
   }
-  async function refresh() {
+  async function refresh(options2 = {}) {
     if (!authService.isSignedIn()) return publish({ status: "signed-out", context: null, error: null });
     if (refreshPromise) return refreshPromise;
+    const preferredGroupCode = clean(options2.preferredGroupCode);
     publish({ status: "loading", error: null });
     refreshPromise = Promise.all([profileService.getProfile(), enrolmentService.getEnrolments()]).then(([rawProfile, rawEnrolments]) => {
       const profile = normaliseProfile(rawProfile);
       const enrolments = normaliseEnrolments(rawEnrolments);
       if (!profile) return publish({ status: "onboarding-required", context: null, error: null });
-      const active = enrolments.find((item2) => item2.status === "active") || enrolments[0] || null;
+      const active = enrolments.find((item2) => item2.status === "active" && (!preferredGroupCode || item2.groupCode === preferredGroupCode)) || enrolments.find((item2) => item2.status === "active") || enrolments[0] || null;
       const context = Object.freeze({
         ...profile,
         yearGroup: active?.yearGroup || "",
@@ -595,7 +598,7 @@ function validateAccount(details = {}) {
   if (password.length < 8) return { ok: false, code: "WEAK_PASSWORD" };
   return { ok: true, value: { email: emailCheck.value, password } };
 }
-function createOnboardingService({ api, authService, learnerContext, storage = globalThis.sessionStorage, pendingKey = "learning-platform.pending-onboarding.v1" } = {}) {
+function createOnboardingService({ api, authService, learnerContext, storage = globalThis.sessionStorage, pendingKey = "learning-platform.pending-onboarding.v1", hubAccessService } = {}) {
   function safePending(details = {}) {
     const checked = validateProfile(details);
     if (!checked.ok) throw new PlatformError({ code: checked.code, category: "validation" });
@@ -634,9 +637,7 @@ function createOnboardingService({ api, authService, learnerContext, storage = g
       throw new PlatformError({ code: "AUTH_REQUIRED", category: "authentication" });
     }
   }
-  async function getRegistrationOptions() {
-    requireSession();
-    const rows = await api.getRegistrationOptions();
+  function mapOptions(rows) {
     return Object.freeze((Array.isArray(rows) ? rows : []).map((row) => Object.freeze({
       registrationKey: clean2(row.registration_option ?? row.registrationKey),
       academicYear: clean2(row.academic_year ?? row.academicYear),
@@ -645,6 +646,24 @@ function createOnboardingService({ api, authService, learnerContext, storage = g
       groupCode: clean2(row.group_code ?? row.groupCode),
       groupName: clean2(row.group_name ?? row.groupName)
     })).filter((option) => option.registrationKey && option.yearGroup));
+  }
+  async function getRegistrationOptions() {
+    requireSession();
+    if (hubAccessService) {
+      const access = await hubAccessService.resolve();
+      if (access.registrationOption) {
+        return mapOptions([{
+          registration_option: access.registrationOption,
+          academic_year: access.academicYear,
+          year_group: access.yearGroup || "Year group",
+          course_title: access.courseTitle,
+          group_code: access.groupCode,
+          group_name: access.groupName
+        }]);
+      }
+      return Object.freeze([]);
+    }
+    return mapOptions(await api.getRegistrationOptions());
   }
   async function complete(details, registrationKey) {
     requireSession();
@@ -693,7 +712,61 @@ function createEnrolmentService(api) {
 function createAssignmentService(api) {
   return Object.freeze({
     getAssignments: () => api.getAssignments(),
+    getHubAssignments: (hubCode) => api.getHubAssignments(hubCode),
     getCurriculumDelivery: () => api.getCurriculumDelivery()
+  });
+}
+
+// src/core/hub-access/hub-access-service.js
+var ENROLLED_STATUSES = Object.freeze([
+  "enrolled",
+  "enrolled_created",
+  "enrolled_reactivated"
+]);
+function clean3(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+function isHubEnrolledStatus(status) {
+  return ENROLLED_STATUSES.includes(clean3(status));
+}
+function mapAccess(row) {
+  if (!row || typeof row !== "object") {
+    return Object.freeze({
+      status: "no_enrolment",
+      idempotent: true,
+      academicYear: "",
+      yearGroup: "",
+      courseTitle: "",
+      groupCode: "",
+      groupName: "",
+      enrolmentStatus: "",
+      registrationOption: ""
+    });
+  }
+  return Object.freeze({
+    status: clean3(row.status) || "no_enrolment",
+    idempotent: row.idempotent !== false,
+    academicYear: clean3(row.academic_year ?? row.academicYear),
+    yearGroup: clean3(row.year_group ?? row.yearGroup),
+    courseTitle: clean3(row.course_title ?? row.courseTitle),
+    groupCode: clean3(row.group_code ?? row.groupCode),
+    groupName: clean3(row.group_name ?? row.groupName),
+    enrolmentStatus: clean3(row.enrolment_status ?? row.enrolmentStatus),
+    registrationOption: clean3(row.registration_option ?? row.registrationOption)
+  });
+}
+function createHubAccessService({ api, hubCode, courseKey } = {}) {
+  async function resolve() {
+    const rows = await api.resolveLearnerHubAccess({
+      p_hub_code: hubCode,
+      p_course_key: courseKey
+    });
+    const row = Array.isArray(rows) ? rows[0] : rows;
+    return mapAccess(row);
+  }
+  return Object.freeze({
+    resolve,
+    isEnrolled: isHubEnrolledStatus
   });
 }
 
@@ -744,10 +817,10 @@ var AUTHORITATIVE_STORAGE_FORBIDDEN = Object.freeze([
   "official progress"
 ]);
 function canonicalActivityVersion(value) {
-  const clean3 = typeof value === "string" ? value.trim() : "";
-  if (!clean3) return "";
-  if (/^\d+\.\d+$/.test(clean3)) return `${clean3}.0`;
-  return clean3;
+  const clean4 = typeof value === "string" ? value.trim() : "";
+  if (!clean4) return "";
+  if (/^\d+\.\d+$/.test(clean4)) return `${clean4}.0`;
+  return clean4;
 }
 function resolveActivityVersion(activity) {
   if (!activity || typeof activity !== "object") return "";
@@ -1224,9 +1297,9 @@ var evidence = Object.freeze({
 // src/core/submission/submission-service.js
 var ALLOWED_FIELDS = ALLOWED_SUBMISSION_FIELDS;
 function requiredString(value, code) {
-  const clean3 = typeof value === "string" ? value.trim() : "";
-  if (!clean3) throw new PlatformError({ code, category: "validation" });
-  return clean3;
+  const clean4 = typeof value === "string" ? value.trim() : "";
+  if (!clean4) throw new PlatformError({ code, category: "validation" });
+  return clean4;
 }
 function timestamp(value, code) {
   if (value == null || value === "") return null;
@@ -1353,9 +1426,9 @@ function createSubmissionService({
 
 // src/core/marking/formative-contract.js
 function requiredString2(value, code) {
-  const clean3 = typeof value === "string" ? value.trim() : "";
-  if (!clean3) throw new PlatformError({ code, category: "validation" });
-  return clean3;
+  const clean4 = typeof value === "string" ? value.trim() : "";
+  if (!clean4) throw new PlatformError({ code, category: "validation" });
+  return clean4;
 }
 function freezeResponses(responses) {
   if (!Array.isArray(responses) || !responses.length) {
@@ -1446,9 +1519,9 @@ function assertAllowedMarkInput(input) {
   });
 }
 function requiredString3(value, code) {
-  const clean3 = typeof value === "string" ? value.trim() : "";
-  if (!clean3) throw new PlatformError({ code, category: "validation" });
-  return clean3;
+  const clean4 = typeof value === "string" ? value.trim() : "";
+  if (!clean4) throw new PlatformError({ code, category: "validation" });
+  return clean4;
 }
 function questionIdFor(block) {
   return String(block?.content?.questionId || block?.id || "").trim();
@@ -1720,6 +1793,7 @@ function derivePlatformState({
   profile = null,
   enrolments = [],
   assignments = [],
+  hubAccess = null,
   error = null
 } = {}) {
   if (error) return "error";
@@ -1728,7 +1802,16 @@ function derivePlatformState({
   if (signingIn) return "signing-in";
   if (!session) return registrationRequired ? "registration-required" : "signed-out";
   if (!profile) return "onboarding-required";
-  if (!Array.isArray(enrolments) || enrolments.length === 0) return "no-enrolment";
+  if (hubAccess) {
+    const status = typeof hubAccess === "string" ? hubAccess : hubAccess.status;
+    if (status === "profile_required") return "onboarding-required";
+    if (status === "ambiguous") return "error";
+    if (!["enrolled", "enrolled_created", "enrolled_reactivated"].includes(status)) {
+      return "no-enrolment";
+    }
+  } else if (!Array.isArray(enrolments) || enrolments.length === 0) {
+    return "no-enrolment";
+  }
   if (!Array.isArray(assignments) || assignments.length === 0) return "no-assignments";
   return "ready";
 }
@@ -2211,6 +2294,7 @@ export {
   createEnrolmentService,
   createFeatureFlags,
   createFormativeMarkingService,
+  createHubAccessService,
   createLearnerApi,
   createLearnerContext,
   createLogger,
@@ -2224,6 +2308,7 @@ export {
   createSubmissionService,
   createSupabaseClient,
   derivePlatformState,
+  isHubEnrolledStatus,
   mapPlatformError,
   reconcileActivityState,
   redact,

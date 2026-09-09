@@ -16,6 +16,7 @@ export { createOnboardingService } from "./core/onboarding/onboarding-service.js
 export { createProfileService } from "./core/profile/profile-service.js";
 export { createEnrolmentService } from "./core/enrolment/enrolment-service.js";
 export { createAssignmentService } from "./core/assignment/assignment-service.js";
+export { createHubAccessService, isHubEnrolledStatus } from "./core/hub-access/hub-access-service.js";
 export { createProgressService } from "./core/progress/progress-service.js";
 export {
   createActivityStateStore,

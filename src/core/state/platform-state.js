@@ -23,6 +23,7 @@ export function derivePlatformState({
   profile = null,
   enrolments = [],
   assignments = [],
+  hubAccess = null,
   error = null
 } = {}) {
   if (error) return "error";
@@ -31,7 +32,16 @@ export function derivePlatformState({
   if (signingIn) return "signing-in";
   if (!session) return registrationRequired ? "registration-required" : "signed-out";
   if (!profile) return "onboarding-required";
-  if (!Array.isArray(enrolments) || enrolments.length === 0) return "no-enrolment";
+  if (hubAccess) {
+    const status = typeof hubAccess === "string" ? hubAccess : hubAccess.status;
+    if (status === "profile_required") return "onboarding-required";
+    if (status === "ambiguous") return "error";
+    if (!["enrolled", "enrolled_created", "enrolled_reactivated"].includes(status)) {
+      return "no-enrolment";
+    }
+  } else if (!Array.isArray(enrolments) || enrolments.length === 0) {
+    return "no-enrolment";
+  }
   if (!Array.isArray(assignments) || assignments.length === 0) return "no-assignments";
   return "ready";
 }

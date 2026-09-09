@@ -46,6 +46,8 @@ export function createLearnerApi({ client, schema = "api", logger } = {}) {
     getProfile: async () => (await read("my_profile", { select: "*" }))[0] || null,
     getEnrolments: () => read("my_enrolments", { order: "joined_on" }),
     getAssignments: () => read("my_assignments", { order: "activity_key" }),
+    getHubAssignments: (hubCode) => rpc("my_hub_assignments", { p_hub_code: hubCode }),
+    resolveLearnerHubAccess: (payload) => rpc("resolve_learner_hub_access", payload),
     getCurriculumDelivery: () => read("my_activity_delivery", { order: "sort_order" }),
     getAttempts: (activityKey) => read("my_attempts", {
       order: "received_at",

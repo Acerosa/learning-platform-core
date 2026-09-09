@@ -30,8 +30,9 @@ The browser is an untrusted presentation and evidence-capture client.
 - Supabase Auth establishes a session. The SDK owns token storage and refresh.
 - Backend functions derive identity from `auth.uid()`.
 - The browser never selects or submits learner, enrolment or assignment IDs as authority.
-- Registration options come from `api.registration_options()` after authentication.
+- Registration options come from `api.registration_options()` after authentication, or from the single hub-eligible key returned by `api.resolve_learner_hub_access` so a hub does not present the platform-wide picker.
 - Onboarding writes only through `api.complete_learner_onboarding(...)`.
+- Hub readiness and hub-scoped assignment reads use `api.resolve_learner_hub_access` and `api.my_hub_assignments`. Identity is `auth.uid()`. The browser sends only the authored hub code and course key.
 - Submission writes only through `api.submit_attempt(...)`.
 - The submission service accepts a strict allow-list and converts neutral evidence into an evidence-only response envelope.
 - Backend responses may include authoritative attempt number, score and progress, but the browser never sends those values as authority.
@@ -81,7 +82,7 @@ offline
 error
 ```
 
-`authenticated` is a transient valid state while enrolments and assignments are being evaluated. `ready` means an authenticated learner has a profile, at least one enrolment and at least one assignment. The state store is observable and exposes immutable snapshots.
+`authenticated` is a transient valid state while hub access and assignments are being evaluated. `ready` means an authenticated learner has a profile, hub-bound enrolment for the current hub, and at least one hub-scoped assignment. An active enrolment in a different hub is `no-enrolment` here. After the resolver creates or reactivates a hub enrolment, learner context is refreshed so header and group fields follow that enrolment. The state store is observable and exposes immutable snapshots.
 
 ## API architecture
 
@@ -90,6 +91,8 @@ The internal learner API adapter fixes the schema to `api` and exposes named ope
 - `getProfile()`
 - `getEnrolments()`
 - `getAssignments()`
+- `getHubAssignments(hubCode)`
+- `resolveLearnerHubAccess({ p_hub_code, p_course_key })`
 - `getCurriculumDelivery()`
 - `getAttempts(activityKey)`
 - `getResponses(activityKey)`

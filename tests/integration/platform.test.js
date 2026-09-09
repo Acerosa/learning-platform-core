@@ -14,12 +14,15 @@ test("platform composes auth, learner context, assignments, progress and submiss
       my_activity_progress: [{ activity_key: "activity-1", completed: true }]
     },
     rpcs: {
+      resolve_learner_hub_access: [{ status: "enrolled", group_code: "A", year_group: "Year 1" }],
+      my_hub_assignments: [{ activity_key: "activity-1" }],
       submit_attempt: (payload) => [{ client_attempt_id: payload.p_client_attempt_id, idempotent: false }]
     }
   });
   const platform = createPlatform({
     hubCode: "test-hub",
     hubName: "Test Hub",
+    courseKey: "test-course",
     navigation: [{ id: "home", path: "./" }]
   }, {
     supabaseClient: client,
