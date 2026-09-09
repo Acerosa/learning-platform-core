@@ -55,6 +55,24 @@ test("auth error codes map to learner-safe messages without revealing account ex
   assert.equal(unknownSignUp.learnerMessage, "We couldn't create your account. Please try again.");
 });
 
+test("PostgREST SQLSTATE responses keep the API message code for learner copy", () => {
+  const linked = mapPlatformError(
+    { code: "23505", message: "STUDENT_NUMBER_ALREADY_LINKED", status: 409 },
+    { operation: "complete-onboarding" }
+  );
+  assert.equal(linked.code, "STUDENT_NUMBER_ALREADY_LINKED");
+  assert.equal(linked.category, "validation");
+  assert.match(linked.learnerMessage, /already linked to another learning account/i);
+  assert.equal(linked.learnerMessage.includes("Try again shortly"), false);
+
+  const invalidKey = mapPlatformError(
+    { code: "22023", message: "INVALID_CLASS_KEY", status: 400 },
+    { operation: "join-class" }
+  );
+  assert.equal(invalidKey.code, "INVALID_CLASS_KEY");
+  assert.match(invalidKey.learnerMessage, /registration key/i);
+});
+
 test("PlatformError never serialises diagnostics to the learner contract", () => {
   const error = new PlatformError({ code: "TEST", category: "platform", diagnostic: { table: "private.students" } });
   assert.equal(JSON.stringify(error).includes("private.students"), false);
