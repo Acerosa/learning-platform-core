@@ -174,13 +174,15 @@ Security: do not log, copy or persist the returned Auth user/session object. Pas
 - `savePending(details)` → safe pending profile subset.
 - `getPending()` → safe pending subset or `null`.
 - `clearPending()` → clears recoverable pending state.
-- `getRegistrationOptions()` → controlled backend options.
+- `getRegistrationOptions()` → hub-eligible registration key when the resolver
+  returns exactly one option; otherwise the platform-wide `registration_options`
+  list only when hub access is not wired.
 - `complete(details, registrationKey)` → onboarding result.
 - `pendingKey` → namespaced session-storage key.
 
-Lifecycle: authenticate first, then load registration options and complete onboarding. Pending state supports an email-confirmation boundary.
+Lifecycle: authenticate first, then load registration options and complete onboarding. Pending state supports an email-confirmation boundary. A hub with exactly one eligible bound group does not present the platform-wide year/group picker.
 
-Security: pending storage contains only first name, surname, Student ID and optional registration key. Options are backend-controlled; identity is derived server-side.
+Security: pending storage contains only first name, surname, Student ID and optional registration key. Options are backend-controlled; identity is derived server-side. The browser does not submit group UUIDs.
 
 ## 9. Learner context API — STABLE
 
@@ -202,12 +204,13 @@ Security: context is presentation data, not browser authority. Do not copy it in
 
 `platform.assignments` provides:
 
-- `getAssignments()` → backend assignment rows.
+- `getAssignments()` → unscoped backend assignment rows (`api.my_assignments`).
+- `getHubAssignments(hubCode)` → assignments for groups bound to this hub.
 - `getCurriculumDelivery()` → learner-safe delivery rows.
 
-Lifecycle: fetch after learner context is authenticated. `createPlatform()` uses assignments to derive `ready`/`no-assignments` state.
+Lifecycle: fetch after learner context is authenticated. `createPlatform()` uses `getHubAssignments(hubCode)` plus `api.resolve_learner_hub_access` to derive `ready`/`no-assignments`/`no-enrolment` for the current hub.
 
-Security: assignments come from approved learner-scoped API views. A hub must not choose an internal assignment ID for authorisation.
+Security: hub-scoped assignment reads send only the authored hub code. A hub must not choose an internal assignment ID or group UUID for authorisation. `getAssignments()` remains available for compatibility and still returns the union of all active enrolments.
 
 ## 11. Progress API — STABLE
 

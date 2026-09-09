@@ -460,6 +460,8 @@ var LearningPlatformCore = (() => {
       getProfile: async () => (await read("my_profile", { select: "*" }))[0] || null,
       getEnrolments: () => read("my_enrolments", { order: "joined_on" }),
       getAssignments: () => read("my_assignments", { order: "activity_key" }),
+      getHubAssignments: (hubCode) => rpc("my_hub_assignments", { p_hub_code: hubCode }),
+      resolveLearnerHubAccess: (payload) => rpc("resolve_learner_hub_access", payload),
       getCurriculumDelivery: () => read("my_activity_delivery", { order: "sort_order" }),
       getAttempts: (activityKey) => read("my_attempts", {
         order: "received_at",
@@ -689,7 +691,61 @@ var LearningPlatformCore = (() => {
   function createAssignmentService(api) {
     return Object.freeze({
       getAssignments: () => api.getAssignments(),
+      getHubAssignments: (hubCode) => api.getHubAssignments(hubCode),
       getCurriculumDelivery: () => api.getCurriculumDelivery()
+    });
+  }
+
+  // src/core/hub-access/hub-access-service.js
+  var ENROLLED_STATUSES = Object.freeze([
+    "enrolled",
+    "enrolled_created",
+    "enrolled_reactivated"
+  ]);
+  function clean(value) {
+    return typeof value === "string" ? value.trim() : "";
+  }
+  function isHubEnrolledStatus(status) {
+    return ENROLLED_STATUSES.includes(clean(status));
+  }
+  function mapAccess(row) {
+    if (!row || typeof row !== "object") {
+      return Object.freeze({
+        status: "no_enrolment",
+        idempotent: true,
+        academicYear: "",
+        yearGroup: "",
+        courseTitle: "",
+        groupCode: "",
+        groupName: "",
+        enrolmentStatus: "",
+        registrationOption: ""
+      });
+    }
+    return Object.freeze({
+      status: clean(row.status) || "no_enrolment",
+      idempotent: row.idempotent !== false,
+      academicYear: clean(row.academic_year ?? row.academicYear),
+      yearGroup: clean(row.year_group ?? row.yearGroup),
+      courseTitle: clean(row.course_title ?? row.courseTitle),
+      groupCode: clean(row.group_code ?? row.groupCode),
+      groupName: clean(row.group_name ?? row.groupName),
+      enrolmentStatus: clean(row.enrolment_status ?? row.enrolmentStatus),
+      registrationOption: clean(row.registration_option ?? row.registrationOption)
+    });
+  }
+  function createHubAccessService({ api, hubCode, courseKey } = {}) {
+    async function resolve() {
+      const rows = await api.resolveLearnerHubAccess({
+        p_hub_code: hubCode,
+        p_course_key: courseKey
+      });
+      const row = Array.isArray(rows) ? rows[0] : rows;
+      return mapAccess(row);
+    }
+    return Object.freeze({
+      resolve,
+      isEnrolled: isHubEnrolledStatus
     });
   }
 
@@ -740,10 +796,10 @@ var LearningPlatformCore = (() => {
     "official progress"
   ]);
   function canonicalActivityVersion(value) {
-    const clean3 = typeof value === "string" ? value.trim() : "";
-    if (!clean3) return "";
-    if (/^\d+\.\d+$/.test(clean3)) return `${clean3}.0`;
-    return clean3;
+    const clean4 = typeof value === "string" ? value.trim() : "";
+    if (!clean4) return "";
+    if (/^\d+\.\d+$/.test(clean4)) return `${clean4}.0`;
+    return clean4;
   }
   function resolveActivityVersion(activity) {
     if (!activity || typeof activity !== "object") return "";
@@ -1098,31 +1154,31 @@ var LearningPlatformCore = (() => {
   }
 
   // src/core/learner/learner-context.js
-  function clean(value) {
+  function clean2(value) {
     return typeof value === "string" ? value.trim() : "";
   }
   function normaliseProfile(profile) {
     if (!profile) return null;
-    const firstName = clean(profile.first_name ?? profile.firstName);
-    const surname = clean(profile.surname);
-    const displayName = clean(profile.display_name ?? profile.displayName) || `${firstName} ${surname}`.trim();
+    const firstName = clean2(profile.first_name ?? profile.firstName);
+    const surname = clean2(profile.surname);
+    const displayName = clean2(profile.display_name ?? profile.displayName) || `${firstName} ${surname}`.trim();
     return Object.freeze({
-      studentNumber: clean(profile.student_number ?? profile.studentNumber),
+      studentNumber: clean2(profile.student_number ?? profile.studentNumber),
       firstName,
       surname,
       fullName: `${firstName} ${surname}`.trim() || displayName,
       displayName,
-      contactEmail: clean(profile.contact_email ?? profile.contactEmail)
+      contactEmail: clean2(profile.contact_email ?? profile.contactEmail)
     });
   }
   function normaliseEnrolments(rows) {
     return Object.freeze((Array.isArray(rows) ? rows : []).map((row) => Object.freeze({
-      status: clean(row.status),
-      groupCode: clean(row.group_code ?? row.groupCode),
-      groupName: clean(row.group_name ?? row.groupName),
-      yearGroup: clean(row.year_group ?? row.yearGroup),
-      academicYear: clean(row.academic_year ?? row.academicYear),
-      courseTitle: clean(row.course_title ?? row.courseTitle),
+      status: clean2(row.status),
+      groupCode: clean2(row.group_code ?? row.groupCode),
+      groupName: clean2(row.group_name ?? row.groupName),
+      yearGroup: clean2(row.year_group ?? row.yearGroup),
+      academicYear: clean2(row.academic_year ?? row.academicYear),
+      courseTitle: clean2(row.course_title ?? row.courseTitle),
       joinedOn: row.joined_on ?? row.joinedOn ?? null
     })));
   }
@@ -1189,14 +1245,14 @@ var LearningPlatformCore = (() => {
   // src/core/onboarding/onboarding-service.js
   var SAFE_PENDING_FIELDS = Object.freeze(["firstName", "surname", "studentNumber", "registrationKey"]);
   var EMAIL_PATTERN2 = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
-  function clean2(value) {
+  function clean3(value) {
     return typeof value === "string" ? value.trim() : "";
   }
   function validateProfile(details = {}) {
     const value = {
-      firstName: clean2(details.firstName),
-      surname: clean2(details.surname),
-      studentNumber: clean2(details.studentNumber)
+      firstName: clean3(details.firstName),
+      surname: clean3(details.surname),
+      studentNumber: clean3(details.studentNumber)
     };
     if (!value.firstName || value.firstName.length > 100) return { ok: false, code: "INVALID_FIRST_NAME" };
     if (!value.surname || value.surname.length > 100) return { ok: false, code: "INVALID_SURNAME" };
@@ -1204,7 +1260,7 @@ var LearningPlatformCore = (() => {
     return { ok: true, value };
   }
   function validateEmail(email) {
-    const value = clean2(email);
+    const value = clean3(email);
     if (!EMAIL_PATTERN2.test(value)) return { ok: false, code: "INVALID_EMAIL" };
     return { ok: true, value };
   }
@@ -1215,12 +1271,12 @@ var LearningPlatformCore = (() => {
     if (password.length < 8) return { ok: false, code: "WEAK_PASSWORD" };
     return { ok: true, value: { email: emailCheck.value, password } };
   }
-  function createOnboardingService({ api, authService, learnerContext, storage = globalThis.sessionStorage, pendingKey = "learning-platform.pending-onboarding.v1" } = {}) {
+  function createOnboardingService({ api, authService, learnerContext, storage = globalThis.sessionStorage, pendingKey = "learning-platform.pending-onboarding.v1", hubAccessService } = {}) {
     function safePending(details = {}) {
       const checked = validateProfile(details);
       if (!checked.ok) throw new PlatformError({ code: checked.code, category: "validation" });
       const pending = { ...checked.value };
-      if (clean2(details.registrationKey)) pending.registrationKey = clean2(details.registrationKey);
+      if (clean3(details.registrationKey)) pending.registrationKey = clean3(details.registrationKey);
       return Object.freeze(pending);
     }
     function savePending(details) {
@@ -1254,22 +1310,38 @@ var LearningPlatformCore = (() => {
         throw new PlatformError({ code: "AUTH_REQUIRED", category: "authentication" });
       }
     }
+    function mapOptions(rows) {
+      return Object.freeze((Array.isArray(rows) ? rows : []).map((row) => Object.freeze({
+        registrationKey: clean3(row.registration_option ?? row.registrationKey),
+        academicYear: clean3(row.academic_year ?? row.academicYear),
+        yearGroup: clean3(row.year_group ?? row.yearGroup),
+        courseTitle: clean3(row.course_title ?? row.courseTitle),
+        groupCode: clean3(row.group_code ?? row.groupCode),
+        groupName: clean3(row.group_name ?? row.groupName)
+      })).filter((option) => option.registrationKey && option.yearGroup));
+    }
     async function getRegistrationOptions() {
       requireSession();
-      const rows = await api.getRegistrationOptions();
-      return Object.freeze((Array.isArray(rows) ? rows : []).map((row) => Object.freeze({
-        registrationKey: clean2(row.registration_option ?? row.registrationKey),
-        academicYear: clean2(row.academic_year ?? row.academicYear),
-        yearGroup: clean2(row.year_group ?? row.yearGroup),
-        courseTitle: clean2(row.course_title ?? row.courseTitle),
-        groupCode: clean2(row.group_code ?? row.groupCode),
-        groupName: clean2(row.group_name ?? row.groupName)
-      })).filter((option) => option.registrationKey && option.yearGroup));
+      if (hubAccessService) {
+        const access = await hubAccessService.resolve();
+        if (access.registrationOption) {
+          return mapOptions([{
+            registration_option: access.registrationOption,
+            academic_year: access.academicYear,
+            year_group: access.yearGroup || "Year group",
+            course_title: access.courseTitle,
+            group_code: access.groupCode,
+            group_name: access.groupName
+          }]);
+        }
+        return Object.freeze([]);
+      }
+      return mapOptions(await api.getRegistrationOptions());
     }
     async function complete(details, registrationKey) {
       requireSession();
       const checked = validateProfile(details);
-      const key = clean2(registrationKey);
+      const key = clean3(registrationKey);
       if (!checked.ok) throw new PlatformError({ code: checked.code, category: "validation" });
       if (!key) throw new PlatformError({ code: "INVALID_REGISTRATION_OPTION", category: "validation" });
       try {
@@ -1422,9 +1494,9 @@ var LearningPlatformCore = (() => {
   // src/core/submission/submission-service.js
   var ALLOWED_FIELDS = ALLOWED_SUBMISSION_FIELDS;
   function requiredString(value, code) {
-    const clean3 = typeof value === "string" ? value.trim() : "";
-    if (!clean3) throw new PlatformError({ code, category: "validation" });
-    return clean3;
+    const clean4 = typeof value === "string" ? value.trim() : "";
+    if (!clean4) throw new PlatformError({ code, category: "validation" });
+    return clean4;
   }
   function timestamp(value, code) {
     if (value == null || value === "") return null;
@@ -1551,9 +1623,9 @@ var LearningPlatformCore = (() => {
 
   // src/core/marking/formative-contract.js
   function requiredString2(value, code) {
-    const clean3 = typeof value === "string" ? value.trim() : "";
-    if (!clean3) throw new PlatformError({ code, category: "validation" });
-    return clean3;
+    const clean4 = typeof value === "string" ? value.trim() : "";
+    if (!clean4) throw new PlatformError({ code, category: "validation" });
+    return clean4;
   }
   function freezeResponses(responses) {
     if (!Array.isArray(responses) || !responses.length) {
@@ -1644,9 +1716,9 @@ var LearningPlatformCore = (() => {
     });
   }
   function requiredString3(value, code) {
-    const clean3 = typeof value === "string" ? value.trim() : "";
-    if (!clean3) throw new PlatformError({ code, category: "validation" });
-    return clean3;
+    const clean4 = typeof value === "string" ? value.trim() : "";
+    if (!clean4) throw new PlatformError({ code, category: "validation" });
+    return clean4;
   }
   function questionIdFor(block) {
     return String(block?.content?.questionId || block?.id || "").trim();
@@ -2397,6 +2469,11 @@ var LearningPlatformCore = (() => {
     const profile = createProfileService(api);
     const enrolments = createEnrolmentService(api);
     const assignments = createAssignmentService(api);
+    const hubAccess = createHubAccessService({
+      api,
+      hubCode: config.hubCode,
+      courseKey: config.courseKey
+    });
     const progress = createProgressService(api, {
       auth,
       storage: dependencies.localStorage,
@@ -2408,7 +2485,8 @@ var LearningPlatformCore = (() => {
       authService: auth,
       learnerContext: learner,
       storage: dependencies.sessionStorage,
-      pendingKey: `learning-platform.pending-onboarding.v1:${config.hubCode}`
+      pendingKey: `learning-platform.pending-onboarding.v1:${config.hubCode}`,
+      hubAccessService: hubAccess
     });
     const submission = createSubmissionService({
       api,
@@ -2454,14 +2532,26 @@ var LearningPlatformCore = (() => {
       if (learnerState.status === "error") state.transition("error", learnerState.error);
       if (learnerState.status !== "authenticated") return;
       state.transition("authenticated");
-      const enrolments2 = learnerState.context?.enrolments || [];
-      if (enrolments2.length === 0) {
-        state.transition("no-enrolment");
-        return;
-      }
       try {
-        const assignmentRows = await assignments.getAssignments();
-        state.transition(Array.isArray(assignmentRows) && assignmentRows.length ? "ready" : "no-assignments");
+        const access = await hubAccess.resolve();
+        if (access.status === "profile_required") {
+          state.transition("onboarding-required");
+          return;
+        }
+        if (isHubEnrolledStatus(access.status)) {
+          const assignmentRows = await assignments.getHubAssignments(config.hubCode);
+          state.transition(Array.isArray(assignmentRows) && assignmentRows.length ? "ready" : "no-assignments");
+          return;
+        }
+        if (access.status === "ambiguous") {
+          state.transition("error", new PlatformError({
+            code: "HUB_ACCESS_AMBIGUOUS",
+            category: "platform",
+            learnerMessage: "Your tutor needs to place you in the correct class for this hub."
+          }));
+          return;
+        }
+        state.transition("no-enrolment");
       } catch (error) {
         state.transition("error", error);
       }
@@ -2877,6 +2967,20 @@ var LearningPlatformCore = (() => {
       try {
         const options2 = await onboardingService.getRegistrationOptions();
         optionWrapper.replaceChildren(optionLabel, select);
+        if (options2.length === 1) {
+          select.replaceChildren(createElement(document, "option", {
+            value: options2[0].registrationKey,
+            text: [options2[0].yearGroup, options2[0].groupName || options2[0].groupCode, options2[0].courseTitle].filter(Boolean).join(" \u2014 ")
+          }));
+          select.value = options2[0].registrationKey;
+          select.required = false;
+          optionWrapper.hidden = true;
+          intro.textContent = "Enter your learner details to finish setting up your account.";
+          submit.disabled = false;
+          return;
+        }
+        optionWrapper.hidden = false;
+        select.required = true;
         select.replaceChildren(createElement(document, "option", { value: "", text: "Choose a year and group" }));
         options2.forEach((option) => {
           const label = [option.yearGroup, option.groupName || option.groupCode, option.courseTitle].filter(Boolean).join(" \u2014 ");

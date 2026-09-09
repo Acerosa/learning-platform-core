@@ -10,6 +10,7 @@ import { createSessionService } from "./core/session/session-service.js";
 import { createProfileService } from "./core/profile/profile-service.js";
 import { createEnrolmentService } from "./core/enrolment/enrolment-service.js";
 import { createAssignmentService } from "./core/assignment/assignment-service.js";
+import { createHubAccessService, isHubEnrolledStatus } from "./core/hub-access/hub-access-service.js";
 import { createProgressService } from "./core/progress/progress-service.js";
 import { createLearnerContext } from "./core/learner/learner-context.js";
 import { createOnboardingService } from "./core/onboarding/onboarding-service.js";
@@ -17,6 +18,7 @@ import { createSubmissionService } from "./core/submission/submission-service.js
 import { createFormativeMarkingService } from "./core/marking/formative-marking-service.js";
 import { createThemeService, applyBranding } from "./theme/theme.js";
 import { createPublishedCurriculumService } from "./curriculum-runtime/index.js";
+import { PlatformError } from "./core/errors/platform-error.js";
 
 export function createPlatform(options = {}, dependencies = {}) {
   const config = createPlatformConfig(options);
@@ -40,6 +42,11 @@ export function createPlatform(options = {}, dependencies = {}) {
   const profile = createProfileService(api);
   const enrolments = createEnrolmentService(api);
   const assignments = createAssignmentService(api);
+  const hubAccess = createHubAccessService({
+    api,
+    hubCode: config.hubCode,
+    courseKey: config.courseKey
+  });
   const progress = createProgressService(api, {
     auth,
     storage: dependencies.localStorage,
@@ -51,7 +58,8 @@ export function createPlatform(options = {}, dependencies = {}) {
     authService: auth,
     learnerContext: learner,
     storage: dependencies.sessionStorage,
-    pendingKey: `learning-platform.pending-onboarding.v1:${config.hubCode}`
+    pendingKey: `learning-platform.pending-onboarding.v1:${config.hubCode}`,
+    hubAccessService: hubAccess
   });
   const submission = createSubmissionService({
     api,
@@ -102,14 +110,26 @@ export function createPlatform(options = {}, dependencies = {}) {
     if (learnerState.status === "error") state.transition("error", learnerState.error);
     if (learnerState.status !== "authenticated") return;
     state.transition("authenticated");
-    const enrolments = learnerState.context?.enrolments || [];
-    if (enrolments.length === 0) {
-      state.transition("no-enrolment");
-      return;
-    }
     try {
-      const assignmentRows = await assignments.getAssignments();
-      state.transition(Array.isArray(assignmentRows) && assignmentRows.length ? "ready" : "no-assignments");
+      const access = await hubAccess.resolve();
+      if (access.status === "profile_required") {
+        state.transition("onboarding-required");
+        return;
+      }
+      if (isHubEnrolledStatus(access.status)) {
+        const assignmentRows = await assignments.getHubAssignments(config.hubCode);
+        state.transition(Array.isArray(assignmentRows) && assignmentRows.length ? "ready" : "no-assignments");
+        return;
+      }
+      if (access.status === "ambiguous") {
+        state.transition("error", new PlatformError({
+          code: "HUB_ACCESS_AMBIGUOUS",
+          category: "platform",
+          learnerMessage: "Your tutor needs to place you in the correct class for this hub."
+        }));
+        return;
+      }
+      state.transition("no-enrolment");
     } catch (error) {
       state.transition("error", error);
     }

@@ -57,6 +57,20 @@ test("canonical platform state covers the LHDS vocabulary", () => {
   assert.equal(derivePlatformState({ session: {}, profile: {}, enrolments: [] }), "no-enrolment");
   assert.equal(derivePlatformState({ session: {}, profile: {}, enrolments: [{}], assignments: [] }), "no-assignments");
   assert.equal(derivePlatformState({ session: {}, profile: {}, enrolments: [{}], assignments: [{}] }), "ready");
+  assert.equal(derivePlatformState({
+    session: {},
+    profile: {},
+    enrolments: [{}],
+    assignments: [{}],
+    hubAccess: { status: "no_enrolment" }
+  }), "no-enrolment");
+  assert.equal(derivePlatformState({
+    session: {},
+    profile: {},
+    enrolments: [{}],
+    assignments: [{}],
+    hubAccess: { status: "enrolled" }
+  }), "ready");
 });
 
 test("platform state and feature flags publish immutable snapshots", () => {
