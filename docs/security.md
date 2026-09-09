@@ -13,7 +13,10 @@ The backend must continue to enforce authentication, Row-Level Security, ownersh
 - Use Supabase Auth only.
 - Supply a public publishable/anonymous key; never ship a service-role key.
 - Let the official SDK persist and refresh the auth session.
+- Persist each hub under a hub-scoped `storageKey` derived from the canonical hub code. Do not share the default `sb-<project-ref>-auth-token` key across GitHub Pages apps on the same origin.
+- Sign out with `{ scope: "local" }` so one hub does not revoke another hub's refresh token. Do not call `localStorage.clear()`.
 - Do not create a parallel token store.
+- Do not treat a hub-specific stored session as authorisation. Hub enrolment and assignments remain server-resolved after authentication.
 - Do not log sessions, access tokens, refresh tokens, passwords or cookies.
 
 ## Data access

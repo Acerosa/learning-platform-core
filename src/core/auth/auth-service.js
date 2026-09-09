@@ -89,7 +89,9 @@ export function createAuthService({ client, logger, resolveRedirectUrl, cleanAut
 
   async function signOut() {
     try {
-      const result = await client.auth.signOut();
+      // Local scope clears only this client's persisted session. Global sign-out
+      // would revoke every refresh token for the Auth user, including other hubs.
+      const result = await client.auth.signOut({ scope: "local" });
       if (result?.error) throw result.error;
     } catch (error) {
       logger?.warn("auth.sign-out.failed", { code: error?.code });

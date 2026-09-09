@@ -397,12 +397,28 @@ var LearningPlatformCore = (() => {
     });
   }
 
-  // src/core/api/supabase-client.js
+  // src/core/auth/auth-storage-key.js
   var PROJECT_URL = /^https:\/\/[a-z0-9-]+\.supabase\.co$/i;
+  var HUB_CODE_PATTERN2 = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+  function createAuthStorageKey(projectUrl, hubCode) {
+    const url = typeof projectUrl === "string" ? projectUrl.trim().replace(/\/+$/, "") : "";
+    const code = typeof hubCode === "string" ? hubCode.trim() : "";
+    if (!PROJECT_URL.test(url)) {
+      throw new PlatformError({ code: "INVALID_SUPABASE_CONFIGURATION", category: "configuration" });
+    }
+    if (!HUB_CODE_PATTERN2.test(code)) {
+      throw new PlatformError({ code: "INVALID_HUB_CODE", category: "configuration" });
+    }
+    const projectRef = new URL(url).hostname.split(".")[0];
+    return `sb-${projectRef}-auth-token--${code}`;
+  }
+
+  // src/core/api/supabase-client.js
   function createSupabaseClient(config = {}, dependencies = {}) {
     if (dependencies.client) return dependencies.client;
     const projectUrl = typeof config.projectUrl === "string" ? config.projectUrl.trim().replace(/\/+$/, "") : "";
     const publishableKey = typeof config.publishableKey === "string" ? config.publishableKey.trim() : "";
+    const hubCode = typeof config.hubCode === "string" ? config.hubCode.trim() : "";
     if (!PROJECT_URL.test(projectUrl) || !publishableKey) {
       throw new PlatformError({ code: "INVALID_SUPABASE_CONFIGURATION", category: "configuration" });
     }
@@ -410,13 +426,16 @@ var LearningPlatformCore = (() => {
     if (typeof createClient !== "function") {
       throw new PlatformError({ code: "SUPABASE_SDK_UNAVAILABLE", category: "configuration" });
     }
-    return createClient(projectUrl, publishableKey, {
-      auth: {
-        persistSession: true,
-        autoRefreshToken: true,
-        detectSessionInUrl: true
-      }
-    });
+    const auth = {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true,
+      storageKey: createAuthStorageKey(projectUrl, hubCode)
+    };
+    if (dependencies.authStorage) {
+      auth.storage = dependencies.authStorage;
+    }
+    return createClient(projectUrl, publishableKey, { auth });
   }
 
   // src/core/api/learner-api.js
@@ -645,7 +664,7 @@ var LearningPlatformCore = (() => {
     }
     async function signOut() {
       try {
-        const result2 = await client.auth.signOut();
+        const result2 = await client.auth.signOut({ scope: "local" });
         if (result2?.error) throw result2.error;
       } catch (error) {
         logger?.warn("auth.sign-out.failed", { code: error?.code });
@@ -2451,9 +2470,13 @@ var LearningPlatformCore = (() => {
   function createPlatform(options2 = {}, dependencies = {}) {
     const config = createPlatformConfig(options2);
     const logger = dependencies.logger || createLogger({ level: options2.logLevel || "warn", context: { hubCode: config.hubCode } });
-    const client = createSupabaseClient(config.supabase, {
+    const client = createSupabaseClient({
+      ...config.supabase,
+      hubCode: config.hubCode
+    }, {
       client: dependencies.supabaseClient,
-      createClient: dependencies.createClient
+      createClient: dependencies.createClient,
+      authStorage: dependencies.authStorage
     });
     const api = createLearnerApi({ client, logger });
     const runtimeWindow = dependencies.window || globalThis.window;

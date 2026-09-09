@@ -6,6 +6,7 @@
  * exceptional composition scenarios. They may change before 1.0.0.
  */
 export { createPlatformConfig } from "./core/config/platform-config.js";
+export { createAuthStorageKey } from "./core/auth/auth-storage-key.js";
 export { createSupabaseClient } from "./core/api/supabase-client.js";
 export { createLearnerApi } from "./core/api/learner-api.js";
 export { createAuthService } from "./core/auth/auth-service.js";

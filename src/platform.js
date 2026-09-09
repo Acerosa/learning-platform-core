@@ -23,9 +23,13 @@ import { PlatformError } from "./core/errors/platform-error.js";
 export function createPlatform(options = {}, dependencies = {}) {
   const config = createPlatformConfig(options);
   const logger = dependencies.logger || createLogger({ level: options.logLevel || "warn", context: { hubCode: config.hubCode } });
-  const client = createSupabaseClient(config.supabase, {
+  const client = createSupabaseClient({
+    ...config.supabase,
+    hubCode: config.hubCode
+  }, {
     client: dependencies.supabaseClient,
-    createClient: dependencies.createClient
+    createClient: dependencies.createClient,
+    authStorage: dependencies.authStorage
   });
   const api = createLearnerApi({ client, logger });
   const runtimeWindow = dependencies.window || globalThis.window;

@@ -31,6 +31,12 @@ await platform.initialise();
 
 Do not put a service-role key in `HUB_PUBLIC_CONFIG`.
 
+`createPlatform()` constructs one learner Auth client for the hub. The client persists the session under `sb-<project-ref>-auth-token--<hubCode>` in `localStorage`. Do not construct a second Auth client with a different `storageKey` in the same hub. Hubs that must retain a raw client for a legacy facade should construct it with `createSupabaseClient()` from `@learning-platform/core/advanced` and pass that same instance as `supabaseClient`.
+
+Learners already signed in under the legacy shared key (`sb-<project-ref>-auth-token`) must sign in once per hub after this change. Core does not copy refresh tokens between namespaces.
+
+Signing out of one hub clears only that hub's namespace.
+
 ## 2. Mount navigation and theme controls
 
 ```js

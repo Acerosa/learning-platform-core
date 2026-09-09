@@ -28,7 +28,9 @@ Adopt `createHubShell` or `createNavigationShell` plus `createBreadcrumbs` for s
 
 ### 4. Replace authentication and session restoration
 
-Use Supabase JS 2.112.3 and supply its `createClient` function (or load that exact browser build before the IIFE). Existing-client injection belongs to the non-stable advanced/test integration path and should not become a hub convention. Enable the shared auth/session service behind a feature flag. Remove custom token REST fallbacks only after equivalent session restore, refresh, sign-out and confirmation tests pass.
+Use Supabase JS 2.112.3 and supply its `createClient` function (or load that exact browser build before the IIFE). Existing-client injection belongs to the non-stable advanced/test integration path and should not become a hub convention. If a hub must inject a client (legacy compatibility facades), construct it with `createSupabaseClient()` from `@learning-platform/core/advanced` so the hub-scoped `storageKey` matches Core. Enable the shared auth/session service behind a feature flag. Remove custom token REST fallbacks only after equivalent session restore, refresh, sign-out and confirmation tests pass.
+
+Hub-scoped Auth persistence is a hard cutover: the previous shared `sb-<project-ref>-auth-token` key is not copied. Learners sign in once per hub. Do not copy refresh tokens between hubs.
 
 ### 5. Replace registration and onboarding
 

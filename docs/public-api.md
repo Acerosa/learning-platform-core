@@ -152,7 +152,7 @@ Security: never put tokens, passwords or raw backend objects in `detail`.
 - `initialise()` → restored auth-state snapshot.
 - `signIn(email, password)` → authenticated state snapshot. The identifier is an email address.
 - `signUp(email, password)` → `{ user, session, needsConfirmation }` from Supabase Auth. Email confirmation links redirect to the current hub root via `options.emailRedirectTo` (derived from `hubRootPath`, not the Supabase project Site URL). Sign-in and sign-up failures map known Auth codes to learner-safe messages and never show raw Auth text.
-- `signOut()` → `true` after local state is cleared.
+- `signOut()` → `true` after this hub's persisted browser session is cleared. The SDK call uses `{ scope: "local" }` so other same-origin hubs and other devices keep their sessions. It does not call `localStorage.clear()`.
 - `subscribe(listener)` → unsubscribe function.
 - `getState()` → current auth snapshot.
 - `getSession()` → current SDK-managed session or `null`.
@@ -160,9 +160,9 @@ Security: never put tokens, passwords or raw backend objects in `detail`.
 
 Lifecycle: use `platform.initialise()` for normal restoration rather than calling auth initialisation separately.
 
-Events: subscribers receive loading, signing-in, authenticated, signed-out and error states.
+Events: subscribers receive loading, signing-in, authenticated, signed-out and error states. Auth events are scoped to this hub's `storageKey`. Same-hub tabs share the session; other hubs do not.
 
-Security: do not log, copy or persist the returned Auth user/session object. Passwords are passed directly to Supabase Auth and are never stored by the core; Supabase JS remains the sole session owner.
+Security: do not log, copy or persist the returned Auth user/session object. Passwords are passed directly to Supabase Auth and are never stored by the core; Supabase JS remains the sole session owner. A stored hub session is not proof of hub enrolment.
 
 ## 8. Onboarding API — STABLE
 
