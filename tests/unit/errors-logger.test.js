@@ -18,6 +18,16 @@ test("platform errors use stable categories and learner-safe messages", () => {
   });
 });
 
+test("auth error codes keep the authentication category without an override", () => {
+  const credentials = mapPlatformError({ code: "invalid_credentials", message: "Invalid login credentials" });
+  assert.equal(credentials.category, "authentication");
+  assert.equal(credentials.learnerMessage, "Email or password is incorrect.");
+
+  const required = mapPlatformError({ code: "AUTH_REQUIRED", message: "not authenticated" });
+  assert.equal(required.category, "authentication");
+  assert.equal(required.learnerMessage, "Sign in to continue.");
+});
+
 test("auth error codes map to learner-safe messages without revealing account existence", () => {
   const credentials = mapPlatformError(
     { code: "invalid_credentials", message: "Invalid login credentials" },
@@ -71,6 +81,22 @@ test("PostgREST SQLSTATE responses keep the API message code for learner copy", 
   );
   assert.equal(invalidKey.code, "INVALID_CLASS_KEY");
   assert.match(invalidKey.learnerMessage, /registration key/i);
+
+  const profileRequired = mapPlatformError(
+    { code: "P0001", message: "PROFILE_REQUIRED", status: 400 },
+    { operation: "join-class" }
+  );
+  assert.equal(profileRequired.code, "PROFILE_REQUIRED");
+  assert.equal(profileRequired.category, "validation");
+  assert.match(profileRequired.learnerMessage, /learner profile/i);
+
+  const onboardingConflict = mapPlatformError(
+    { code: "P0001", message: "ONBOARDING_CONFLICT", status: 409 },
+    { operation: "complete-onboarding" }
+  );
+  assert.equal(onboardingConflict.code, "ONBOARDING_CONFLICT");
+  assert.equal(onboardingConflict.category, "validation");
+  assert.match(onboardingConflict.learnerMessage, /does not match that learner profile/i);
 });
 
 test("PlatformError never serialises diagnostics to the learner contract", () => {

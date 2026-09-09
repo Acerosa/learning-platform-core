@@ -39,9 +39,9 @@ const OPERATION_MESSAGES = Object.freeze({
 });
 
 const CODE_RULES = Object.freeze([
-  [/STUDENT_NUMBER|ONBOARDING_CONFLICT|INVALID|VALIDATION|REQUIRED|MISMATCH/i, "validation"],
   [/AUTH|CREDENTIAL|SESSION|EMAIL_NOT_CONFIRMED|RATE_LIMIT|AUTH_ACCOUNT_ALREADY_LINKED/i, "authentication"],
   [/PERMISSION|FORBIDDEN|RLS|42501/i, "authorisation"],
+  [/STUDENT_NUMBER|ONBOARDING_CONFLICT|INVALID|VALIDATION|REQUIRED|MISMATCH/i, "validation"],
   [/NETWORK|FETCH|TIMEOUT|ABORT|OFFLINE/i, "network"],
   [/SUBMIT|ATTEMPT|ASSIGNMENT|ACTIVITY_VERSION/i, "submission"],
   [/CONFIG|SUPABASE_URL|PUBLISHABLE_KEY/i, "configuration"]
@@ -51,7 +51,7 @@ function apiCodeFrom(error) {
   const candidates = [error?.code, error?.message, error?.details, error?.hint];
   for (const candidate of candidates) {
     const value = String(candidate || "").trim();
-    if (/^[A-Z][A-Z0-9_]+$/.test(value) && !/^\d+$/.test(value)) return value;
+    if (/^[A-Z][A-Z0-9_]+$/.test(value) && !/^[A-Z0-9]{5}$/.test(value)) return value;
   }
   return String(error?.code || error?.name || "PLATFORM_ERROR");
 }
