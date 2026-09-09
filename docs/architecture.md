@@ -82,7 +82,7 @@ offline
 error
 ```
 
-`authenticated` is a transient valid state while hub access and assignments are being evaluated. `ready` means an authenticated learner has a profile, hub-bound enrolment for the current hub, and at least one hub-scoped assignment. An active enrolment in a different hub is `no-enrolment` here. The state store is observable and exposes immutable snapshots.
+`authenticated` is a transient valid state while hub access and assignments are being evaluated. `ready` means an authenticated learner has a profile, hub-bound enrolment for the current hub, and at least one hub-scoped assignment. An active enrolment in a different hub is `no-enrolment` here. After the resolver creates or reactivates a hub enrolment, learner context is refreshed so header and group fields follow that enrolment. The state store is observable and exposes immutable snapshots.
 
 ## API architecture
 

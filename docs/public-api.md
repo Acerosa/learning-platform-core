@@ -189,7 +189,10 @@ Security: pending storage contains only first name, surname, Student ID and opti
 `platform.learner` provides:
 
 - `initialise()` → initial context state.
-- `refresh()` → refreshed context state.
+- `refresh({ preferredGroupCode }?)` → refreshed context state. When
+  `preferredGroupCode` is supplied, an active enrolment in that group is preferred
+  for header/year/group fields. `createPlatform()` uses this after the hub resolver
+  creates or reactivates an enrolment so the current hub is shown without a reload.
 - `subscribe(listener)` → unsubscribe function.
 - `getState()` → `{ status, context, error }`.
 - `getContext()` → backend-derived learner context or `null`.

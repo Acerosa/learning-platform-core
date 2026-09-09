@@ -179,16 +179,160 @@ test("platform readiness uses hub assignments, not the unscoped my_assignments u
   platform.destroy();
 });
 
-test("Cyber-enrolled learner with one T Level open_auto group becomes T Level ready", async () => {
+function hubWriteClient({
+  enrolments,
+  writtenGroup,
+  writeStatus = "enrolled_created",
+  hubAssignments = [{ activity_key: "foundations-requirements-classification" }]
+}) {
+  const enrolmentRows = enrolments.map((row) => ({ ...row }));
+  const stats = { writes: 0 };
   const client = fakeSupabase({
     session: { access_token: "managed", user: { id: "auth-user" } },
     views: {
-      my_profile: [{ student_number: "HUB-CYBER", first_name: "Cyber", surname: "Learner" }],
-      my_enrolments: [{ status: "active", group_code: "CYBER-TEST-A", year_group: "Year 1" }],
+      my_profile: [{ student_number: "HUB-WRITE", first_name: "Hub", surname: "Learner" }],
+      my_enrolments: enrolmentRows,
       my_assignments: [
         { activity_key: "week2-malware-symptoms" },
         { activity_key: "foundations-requirements-classification" }
       ]
+    },
+    rpcs: {
+      resolve_learner_hub_access: () => {
+        const alreadyActive = enrolmentRows.some((row) => (
+          row.status === "active" && row.group_code === writtenGroup.group_code
+        ));
+        if (!alreadyActive) {
+          stats.writes += 1;
+          const inactiveMatch = enrolmentRows.find((row) => row.group_code === writtenGroup.group_code);
+          if (inactiveMatch) {
+            inactiveMatch.status = "active";
+          } else {
+            enrolmentRows.push({
+              status: "active",
+              group_code: writtenGroup.group_code,
+              group_name: writtenGroup.group_name || writtenGroup.group_code,
+              year_group: writtenGroup.year_group
+            });
+          }
+          return [{
+            status: writeStatus,
+            group_code: writtenGroup.group_code,
+            group_name: writtenGroup.group_name || writtenGroup.group_code,
+            year_group: writtenGroup.year_group
+          }];
+        }
+        return [{
+          status: "enrolled",
+          group_code: writtenGroup.group_code,
+          group_name: writtenGroup.group_name || writtenGroup.group_code,
+          year_group: writtenGroup.year_group
+        }];
+      },
+      my_hub_assignments: hubAssignments
+    }
+  });
+  client.hubEnrolmentWrites = () => stats.writes;
+  return client;
+}
+
+async function settle() {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+test("Cyber-enrolled learner with one T Level open_auto group becomes T Level ready", async () => {
+  const client = hubWriteClient({
+    enrolments: [{ status: "active", group_code: "CYBER-TEST-A", year_group: "Year 1" }],
+    writtenGroup: { group_code: "TLEVEL-DSD-Y2", group_name: "T Level Year 2", year_group: "Year 2" }
+  });
+  const platform = createPlatform({
+    hubCode: "tlevel-software-development",
+    hubName: "T Level Digital Software Development Hub",
+    courseKey: "t-level-digital-software-development"
+  }, {
+    supabaseClient: client,
+    sessionStorage: memoryStorage(),
+    document: null,
+    window: null
+  });
+  await platform.initialise();
+  await settle();
+  assert.equal(platform.state.getState().status, "ready");
+  assert.equal(platform.learner.getContext().groupCode, "TLEVEL-DSD-Y2");
+  assert.equal(platform.learner.getContext().yearGroup, "Year 2");
+  assert.deepEqual(await platform.assignments.getHubAssignments("tlevel-software-development"), [
+    { activity_key: "foundations-requirements-classification" }
+  ]);
+  assert.equal(client.hubEnrolmentWrites(), 1);
+  platform.destroy();
+});
+
+test("after enrolled_created, learner context follows the new hub enrolment without a second write", async () => {
+  const client = hubWriteClient({
+    enrolments: [{ status: "active", group_code: "CYBER-TEST-A", year_group: "Year 1" }],
+    writtenGroup: { group_code: "TLEVEL-DSD-Y2", group_name: "T Level Year 2", year_group: "Year 2" }
+  });
+  const platform = createPlatform({
+    hubCode: "tlevel-software-development",
+    hubName: "T Level Digital Software Development Hub",
+    courseKey: "t-level-digital-software-development"
+  }, {
+    supabaseClient: client,
+    sessionStorage: memoryStorage(),
+    document: null,
+    window: null
+  });
+  await platform.initialise();
+  await settle();
+  assert.equal(platform.state.getState().status, "ready");
+  assert.equal(platform.learner.getContext().groupCode, "TLEVEL-DSD-Y2");
+  assert.equal(client.hubEnrolmentWrites(), 1);
+  await platform.learner.refresh({ preferredGroupCode: "TLEVEL-DSD-Y2" });
+  await settle();
+  assert.equal(platform.state.getState().status, "ready");
+  assert.equal(platform.learner.getContext().groupCode, "TLEVEL-DSD-Y2");
+  assert.equal(client.hubEnrolmentWrites(), 1);
+  const laterResolves = client.calls.filter((call) => call.type === "rpc" && call.name === "resolve_learner_hub_access");
+  assert.equal(laterResolves.length >= 2, true);
+  platform.destroy();
+});
+
+test("after enrolled_reactivated, learner context follows the restored hub enrolment", async () => {
+  const client = hubWriteClient({
+    enrolments: [
+      { status: "active", group_code: "CYBER-TEST-A", year_group: "Year 1" },
+      { status: "withdrawn", group_code: "TLEVEL-DSD-Y2", year_group: "Year 2" }
+    ],
+    writtenGroup: { group_code: "TLEVEL-DSD-Y2", group_name: "T Level Year 2", year_group: "Year 2" },
+    writeStatus: "enrolled_reactivated"
+  });
+  const platform = createPlatform({
+    hubCode: "tlevel-software-development",
+    hubName: "T Level Digital Software Development Hub",
+    courseKey: "t-level-digital-software-development"
+  }, {
+    supabaseClient: client,
+    sessionStorage: memoryStorage(),
+    document: null,
+    window: null
+  });
+  await platform.initialise();
+  await settle();
+  assert.equal(platform.state.getState().status, "ready");
+  assert.equal(platform.learner.getContext().groupCode, "TLEVEL-DSD-Y2");
+  assert.equal(platform.learner.getContext().yearGroup, "Year 2");
+  assert.equal(client.hubEnrolmentWrites(), 1);
+  platform.destroy();
+});
+
+test("L2E-enrolled learner with one T Level open_auto group becomes T Level ready", async () => {
+  const client = fakeSupabase({
+    session: { access_token: "managed", user: { id: "auth-user" } },
+    views: {
+      my_profile: [{ student_number: "HUB-L2E", first_name: "L2E", surname: "Learner" }],
+      my_enrolments: [{ status: "active", group_code: "L2E-DELIVERY-A", year_group: "Year 1" }],
+      my_assignments: [{ activity_key: "l2e-activity" }]
     },
     rpcs: {
       resolve_learner_hub_access: [{
@@ -218,13 +362,13 @@ test("Cyber-enrolled learner with one T Level open_auto group becomes T Level re
   platform.destroy();
 });
 
-test("L2E-enrolled learner with one T Level open_auto group becomes T Level ready", async () => {
+test("Unit 14-enrolled learner with one T Level open_auto group becomes T Level ready", async () => {
   const client = fakeSupabase({
     session: { access_token: "managed", user: { id: "auth-user" } },
     views: {
-      my_profile: [{ student_number: "HUB-L2E", first_name: "L2E", surname: "Learner" }],
-      my_enrolments: [{ status: "active", group_code: "L2E-DELIVERY-A", year_group: "Year 1" }],
-      my_assignments: [{ activity_key: "l2e-activity" }]
+      my_profile: [{ student_number: "HUB-U14", first_name: "Unit", surname: "Fourteen" }],
+      my_enrolments: [{ status: "active", group_code: "UNIT14-TEST-A", year_group: "Year 1" }],
+      my_assignments: [{ activity_key: "unit14-activity" }]
     },
     rpcs: {
       resolve_learner_hub_access: [{
@@ -281,6 +425,54 @@ test("an unrelated enrolment is not treated as T Level authority", async () => {
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(platform.state.getState().status, "no-enrolment");
   assert.equal(client.calls.some((call) => call.type === "rpc" && call.name === "my_hub_assignments"), false);
+  platform.destroy();
+});
+
+test("Cyber hub readiness uses Cyber hub assignments when the learner is also on T Level", async () => {
+  const client = fakeSupabase({
+    session: { access_token: "managed", user: { id: "auth-user" } },
+    views: {
+      my_profile: [{ student_number: "000123", first_name: "Ada", surname: "Lovelace" }],
+      my_enrolments: [
+        { status: "active", group_code: "CYBER-TEST-A", year_group: "Year 1" },
+        { status: "active", group_code: "TLEVEL-DSD-Y2", year_group: "Year 2" }
+      ],
+      my_assignments: [
+        { activity_key: "week2-malware-symptoms" },
+        { activity_key: "foundations-requirements-classification" }
+      ]
+    },
+    rpcs: {
+      resolve_learner_hub_access: [{
+        status: "enrolled",
+        group_code: "CYBER-TEST-A",
+        year_group: "Year 1",
+        enrolment_status: "active"
+      }],
+      my_hub_assignments: [{ activity_key: "week2-malware-symptoms" }]
+    }
+  });
+  const platform = createPlatform({
+    hubCode: "unit-3-cyber-security",
+    hubName: "Unit 3 Cyber Security Hub",
+    courseKey: "ocr-level-3-it"
+  }, {
+    supabaseClient: client,
+    sessionStorage: memoryStorage(),
+    document: null,
+    window: null
+  });
+  await platform.initialise();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(platform.state.getState().status, "ready");
+  assert.deepEqual(await platform.assignments.getHubAssignments("unit-3-cyber-security"), [
+    { activity_key: "week2-malware-symptoms" }
+  ]);
+  const accessPayload = client.calls.find((call) => call.type === "rpc" && call.name === "resolve_learner_hub_access")?.payload;
+  assert.deepEqual(accessPayload, {
+    p_hub_code: "unit-3-cyber-security",
+    p_course_key: "ocr-level-3-it"
+  });
   platform.destroy();
 });
 

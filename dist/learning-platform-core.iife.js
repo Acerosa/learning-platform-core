@@ -1198,15 +1198,16 @@ var LearningPlatformCore = (() => {
       listener(state);
       return () => listeners.delete(listener);
     }
-    async function refresh() {
+    async function refresh(options2 = {}) {
       if (!authService.isSignedIn()) return publish({ status: "signed-out", context: null, error: null });
       if (refreshPromise) return refreshPromise;
+      const preferredGroupCode = clean2(options2.preferredGroupCode);
       publish({ status: "loading", error: null });
       refreshPromise = Promise.all([profileService.getProfile(), enrolmentService.getEnrolments()]).then(([rawProfile, rawEnrolments]) => {
         const profile = normaliseProfile(rawProfile);
         const enrolments = normaliseEnrolments(rawEnrolments);
         if (!profile) return publish({ status: "onboarding-required", context: null, error: null });
-        const active = enrolments.find((item2) => item2.status === "active") || enrolments[0] || null;
+        const active = enrolments.find((item2) => item2.status === "active" && (!preferredGroupCode || item2.groupCode === preferredGroupCode)) || enrolments.find((item2) => item2.status === "active") || enrolments[0] || null;
         const context = Object.freeze({
           ...profile,
           yearGroup: active?.yearGroup || "",
@@ -2521,12 +2522,17 @@ var LearningPlatformCore = (() => {
     const root = (dependencies.document || globalThis.document)?.documentElement;
     applyBranding(root, config.theme);
     const unsubscribers = [];
+    let hubEnrolmentContextSynced = false;
     unsubscribers.push(auth.subscribe((authState) => {
       if (authState.status === "signing-in") state.transition("signing-in");
-      if (authState.status === "signed-out") state.transition("signed-out");
+      if (authState.status === "signed-out") {
+        hubEnrolmentContextSynced = false;
+        state.transition("signed-out");
+      }
       if (authState.status === "error") state.transition("error", authState.error);
     }));
     unsubscribers.push(learner.subscribe(async (learnerState) => {
+      if (learnerState.status === "signed-out") hubEnrolmentContextSynced = false;
       if (learnerState.status === "loading") state.transition("loading");
       if (learnerState.status === "onboarding-required") state.transition("onboarding-required");
       if (learnerState.status === "error") state.transition("error", learnerState.error);
@@ -2539,6 +2545,12 @@ var LearningPlatformCore = (() => {
           return;
         }
         if (isHubEnrolledStatus(access.status)) {
+          const preferredGroupCode = access.groupCode;
+          const currentGroupCode = learner.getContext()?.groupCode || "";
+          if ((access.status === "enrolled_created" || access.status === "enrolled_reactivated") && preferredGroupCode && currentGroupCode !== preferredGroupCode && !hubEnrolmentContextSynced) {
+            hubEnrolmentContextSynced = true;
+            await learner.refresh({ preferredGroupCode });
+          }
           const assignmentRows = await assignments.getHubAssignments(config.hubCode);
           state.transition(Array.isArray(assignmentRows) && assignmentRows.length ? "ready" : "no-assignments");
           return;

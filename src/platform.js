@@ -97,14 +97,19 @@ export function createPlatform(options = {}, dependencies = {}) {
   const root = (dependencies.document || globalThis.document)?.documentElement;
   applyBranding(root, config.theme);
   const unsubscribers = [];
+  let hubEnrolmentContextSynced = false;
 
   unsubscribers.push(auth.subscribe((authState) => {
     if (authState.status === "signing-in") state.transition("signing-in");
-    if (authState.status === "signed-out") state.transition("signed-out");
+    if (authState.status === "signed-out") {
+      hubEnrolmentContextSynced = false;
+      state.transition("signed-out");
+    }
     if (authState.status === "error") state.transition("error", authState.error);
   }));
 
   unsubscribers.push(learner.subscribe(async (learnerState) => {
+    if (learnerState.status === "signed-out") hubEnrolmentContextSynced = false;
     if (learnerState.status === "loading") state.transition("loading");
     if (learnerState.status === "onboarding-required") state.transition("onboarding-required");
     if (learnerState.status === "error") state.transition("error", learnerState.error);
@@ -117,6 +122,17 @@ export function createPlatform(options = {}, dependencies = {}) {
         return;
       }
       if (isHubEnrolledStatus(access.status)) {
+        const preferredGroupCode = access.groupCode;
+        const currentGroupCode = learner.getContext()?.groupCode || "";
+        if (
+          (access.status === "enrolled_created" || access.status === "enrolled_reactivated")
+          && preferredGroupCode
+          && currentGroupCode !== preferredGroupCode
+          && !hubEnrolmentContextSynced
+        ) {
+          hubEnrolmentContextSynced = true;
+          await learner.refresh({ preferredGroupCode });
+        }
         const assignmentRows = await assignments.getHubAssignments(config.hubCode);
         state.transition(Array.isArray(assignmentRows) && assignmentRows.length ? "ready" : "no-assignments");
         return;

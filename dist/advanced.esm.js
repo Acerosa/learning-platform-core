@@ -524,15 +524,16 @@ function createLearnerContext({ authService, profileService, enrolmentService } 
     listener(state);
     return () => listeners.delete(listener);
   }
-  async function refresh() {
+  async function refresh(options2 = {}) {
     if (!authService.isSignedIn()) return publish({ status: "signed-out", context: null, error: null });
     if (refreshPromise) return refreshPromise;
+    const preferredGroupCode = clean(options2.preferredGroupCode);
     publish({ status: "loading", error: null });
     refreshPromise = Promise.all([profileService.getProfile(), enrolmentService.getEnrolments()]).then(([rawProfile, rawEnrolments]) => {
       const profile = normaliseProfile(rawProfile);
       const enrolments = normaliseEnrolments(rawEnrolments);
       if (!profile) return publish({ status: "onboarding-required", context: null, error: null });
-      const active = enrolments.find((item2) => item2.status === "active") || enrolments[0] || null;
+      const active = enrolments.find((item2) => item2.status === "active" && (!preferredGroupCode || item2.groupCode === preferredGroupCode)) || enrolments.find((item2) => item2.status === "active") || enrolments[0] || null;
       const context = Object.freeze({
         ...profile,
         yearGroup: active?.yearGroup || "",
