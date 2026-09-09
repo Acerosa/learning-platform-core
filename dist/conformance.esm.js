@@ -22,7 +22,10 @@ var DEFAULT_MESSAGES = Object.freeze({
 var CODE_MESSAGES = Object.freeze({
   invalid_credentials: "Email or password is incorrect.",
   email_not_confirmed: "Confirm your email before signing in.",
-  over_email_send_rate_limit: "Too many account emails have been requested. Please wait a few minutes and try again."
+  over_email_send_rate_limit: "Too many account emails have been requested. Please wait a few minutes and try again.",
+  user_already_exists: "An account with this email already exists. Sign in with your existing email and password.",
+  email_exists: "An account with this email already exists. Sign in with your existing email and password.",
+  invalid_class_key: "Could not join your class. Check the registration key and try again."
 });
 var OPERATION_MESSAGES = Object.freeze({
   "sign-in": "We couldn't sign you in. Please try again.",

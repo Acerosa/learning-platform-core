@@ -107,6 +107,7 @@ The internal learner API adapter fixes the schema to `api` and exposes named ope
 - `clearActivityState(activityKey, activityVersion)`
 - `getRegistrationOptions()`
 - `completeOnboarding(payload)`
+- `joinLearnerHubGroup(payload)`
 - `submitAttempt(payload)`
 - `getPublishedCurriculum()`
 - `getPublishedCurriculumPackage(hubCode, courseKey, packageVersion?)`

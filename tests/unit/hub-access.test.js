@@ -50,7 +50,7 @@ test("hub access maps enrolled statuses and learner-safe fields", async () => {
   assert.equal(isHubEnrolledStatus("no_enrolment"), false);
 });
 
-test("onboarding uses the hub-eligible registration key instead of the platform-wide picker", async () => {
+test("onboarding does not expose a platform-wide year and group picker", async () => {
   const calls = [];
   const service = createOnboardingService({
     api: {
@@ -77,11 +77,11 @@ test("onboarding uses the hub-eligible registration key instead of the platform-
     }
   });
   const options = await service.getRegistrationOptions();
-  assert.deepEqual(options.map((option) => option.registrationKey), ["tlevel-dsd-y2"]);
+  assert.deepEqual(options, []);
   assert.deepEqual(calls, []);
 });
 
-test("T Level onboarding view hides the year and group picker when one hub group is eligible", async () => {
+test("T Level onboarding view has no year and group picker", async () => {
   const runtime = dom();
   const service = createOnboardingService({
     api: {},
@@ -103,10 +103,8 @@ test("T Level onboarding view hides the year and group picker when one hub group
     document: runtime.window.document,
     onboardingService: service
   });
-  await new Promise((resolve) => setTimeout(resolve, 0));
   const picker = view.element.querySelector("#lp-registration-option");
-  assert.equal(picker.value, "tlevel-dsd-y2");
-  assert.equal(picker.closest(".lp-form__field").hidden, true);
+  assert.equal(picker, null);
   assert.match(view.element.textContent, /Enter your learner details to finish setting up your account/);
   assert.equal(view.element.textContent.includes("Choose a year and group"), false);
   view.destroy();
@@ -499,4 +497,74 @@ test("platform still uses the compatibility assignment view through getAssignmen
   await platform.initialise();
   assert.deepEqual(await platform.assignments.getAssignments(), [{ activity_key: "activity-1" }]);
   platform.destroy();
+});
+
+test("joinClass sends hub code and class key, not a group UUID", async () => {
+  let joined = null;
+  const service = createOnboardingService({
+    api: {},
+    authService: { isSignedIn: () => true },
+    learnerContext: { refresh: async () => {} },
+    storage: memoryStorage(),
+    hubAccessService: {
+      join: async (classKey) => {
+        joined = classKey;
+        return {
+          status: "enrolled_created",
+          groupCode: "CYBER-TEST-A",
+          yearGroup: "Year 1"
+        };
+      }
+    }
+  });
+  const access = await service.joinClass("cyber-year-1-test");
+  assert.equal(joined, "cyber-year-1-test");
+  assert.equal(access.groupCode, "CYBER-TEST-A");
+});
+
+test("complete then resolve auto-enrols a T Level learner without a group picker value", async () => {
+  const calls = [];
+  const service = createOnboardingService({
+    api: {
+      completeOnboarding: async (payload) => {
+        calls.push({ type: "complete", payload });
+        return [{ student_number: "BOUND-TLEVEL" }];
+      }
+    },
+    authService: { isSignedIn: () => true },
+    learnerContext: { refresh: async () => { calls.push({ type: "refresh" }); } },
+    storage: memoryStorage(),
+    hubAccessService: {
+      resolve: async () => {
+        calls.push({ type: "resolve" });
+        return {
+          status: "enrolled_created",
+          groupCode: "TLEVEL-DSD-Y2",
+          yearGroup: "Year 2"
+        };
+      }
+    }
+  });
+  await service.complete({ firstName: "New", surname: "TLevel", studentNumber: "BOUND-TLEVEL" }, "cyber-year-1-test");
+  assert.equal(calls[0].payload.p_registration_option, "");
+  assert.equal(calls.some((call) => call.type === "resolve"), true);
+});
+
+test("hub access join RPC uses only hub code and class key", async () => {
+  const access = createHubAccessService({
+    api: {
+      joinLearnerHubGroup: async (payload) => {
+        assert.deepEqual(payload, {
+          p_hub_code: "unit-3-cyber-security",
+          p_class_key: "cyber-year-1-test"
+        });
+        return [{ status: "enrolled_created", group_code: "CYBER-TEST-A" }];
+      }
+    },
+    hubCode: "unit-3-cyber-security",
+    courseKey: "ocr-level-3-it"
+  });
+  const row = await access.join("cyber-year-1-test");
+  assert.equal(row.status, "enrolled_created");
+  assert.equal(row.groupCode, "CYBER-TEST-A");
 });

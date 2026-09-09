@@ -27,7 +27,7 @@ Backend permissions remain mandatory even when a view or RPC is named by the cor
 
 ## Onboarding data
 
-The account form handles passwords only long enough to call Supabase Auth. Pending onboarding storage contains only first name, surname, Student ID as text and an optional controlled registration key.
+The account form handles passwords only long enough to call Supabase Auth. Pending onboarding storage contains only first name, surname and Student ID as text. It is not group or enrolment authority.
 
 It uses session storage, not long-lived profile storage, and is cleared after successful onboarding. Integrations should also clear it on a deliberate account reset/sign-out.
 

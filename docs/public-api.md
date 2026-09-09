@@ -174,15 +174,21 @@ Security: do not log, copy or persist the returned Auth user/session object. Pas
 - `savePending(details)` → safe pending profile subset.
 - `getPending()` → safe pending subset or `null`.
 - `clearPending()` → clears recoverable pending state.
-- `getRegistrationOptions()` → hub-eligible registration key when the resolver
-  returns exactly one option; otherwise the platform-wide `registration_options`
-  list only when hub access is not wired.
-- `complete(details, registrationKey)` → onboarding result.
+- `getRegistrationOptions()` → empty list. Learners do not choose a group,
+  year, or class from a picker.
+- `complete(details)` → profile/linking only. Does not send a group key as
+  authority. After a successful profile, hub access is resolved server-side.
+- `joinClass(classKey)` → controlled-hub JoinClass. Sends the hub's own code
+  plus the tutor class key to `api.join_learner_hub_group`.
 - `pendingKey` → namespaced session-storage key.
 
-Lifecycle: authenticate first, then load registration options and complete onboarding. Pending state supports an email-confirmation boundary. A hub with exactly one eligible bound group does not present the platform-wide year/group picker.
+Lifecycle: authenticate first, then complete the learner profile. Pending state
+supports an email-confirmation boundary. Open-auto hubs enrol through
+`resolve_learner_hub_access`. Controlled hubs enrol through `joinClass`.
 
-Security: pending storage contains only first name, surname, Student ID and optional registration key. Options are backend-controlled; identity is derived server-side. The browser does not submit group UUIDs.
+Security: pending storage contains only first name, surname, Student ID and
+optional registration key. The browser does not submit group UUIDs. A supplied
+class key is validated server-side against the current hub.
 
 ## 9. Learner context API — STABLE
 

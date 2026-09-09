@@ -101,8 +101,8 @@ Registration is intentionally staged:
 2. Save only safe pending learner details in session storage.
 3. Create the Supabase Auth account using email/password.
 4. If email confirmation is required, wait for confirmation and sign-in.
-5. Once authenticated, load controlled registration options.
-6. Call the onboarding RPC.
+5. Once authenticated, complete the learner profile. Do not collect a year/group choice.
+6. Open-auto hubs resolve access server-side. Controlled hubs collect a tutor class key and call `joinClass`.
 7. Refresh learner context and clear pending state.
 
 An existing authenticated account without a learner profile enters `onboarding-required` and can resume the same flow. Passwords are never persisted by the package.

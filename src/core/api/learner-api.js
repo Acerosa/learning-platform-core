@@ -79,6 +79,7 @@ export function createLearnerApi({ client, schema = "api", logger } = {}) {
     }),
     getRegistrationOptions: () => rpc("registration_options"),
     completeOnboarding: (payload) => rpc("complete_learner_onboarding", payload),
+    joinLearnerHubGroup: (payload) => rpc("join_learner_hub_group", payload),
     submitAttempt: (payload) => rpc("submit_attempt", payload),
     markFormativeResponse: (payload) => rpc("mark_formative_response", payload),
     getPublishedCurriculum: () => rpc("published_curriculum"),
