@@ -72,6 +72,7 @@ const ADVANCED_EXPORTS = Object.freeze([
   "cleanAuthCallbackFromUrl",
   "createAssignmentService",
   "createAuthService",
+  "createAuthStorageKey",
   "createEnrolmentService",
   "createFeatureFlags",
   "createFormativeMarkingService",
@@ -166,19 +167,33 @@ test("package metadata pins the tested SDK and exports no deep source paths", as
 test("the pinned Supabase SDK satisfies the supported client-construction contract", () => {
   assert.equal(typeof createClient, "function");
   assert.equal(typeof advancedSource.createSupabaseClient, "function");
-  let client;
-  try {
-    client = advancedSource.createSupabaseClient({
-      projectUrl: "https://contract.supabase.co",
-      publishableKey: "contract-public-key"
-    }, { createClient });
-  } catch (error) {
-    assert.match(String(error.message), /WebSocket/);
-    return;
+  assert.equal(typeof advancedSource.createAuthStorageKey, "function");
+  class FakeWebSocket {
+    addEventListener() {}
+    removeEventListener() {}
+    send() {}
+    close() {}
   }
+  const client = advancedSource.createSupabaseClient({
+    projectUrl: "https://contract.supabase.co",
+    publishableKey: "contract-public-key",
+    hubCode: "contract-hub"
+  }, {
+    createClient(url, key, options) {
+      return createClient(url, key, {
+        ...options,
+        realtime: { transport: FakeWebSocket }
+      });
+    }
+  });
   assert.equal(typeof client.auth.getSession, "function");
   assert.equal(typeof client.schema, "function");
   assert.equal(client.supabaseUrl, "https://contract.supabase.co");
+  assert.equal(client.storageKey, "sb-contract-auth-token--contract-hub");
+  assert.equal(
+    client.storageKey,
+    advancedSource.createAuthStorageKey("https://contract.supabase.co", "contract-hub")
+  );
 });
 
 test("quality CI enforces locked install, checks, conformance, audit and package validation only", async () => {

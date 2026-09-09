@@ -199,12 +199,28 @@ function createPlatformConfig(options2 = {}) {
   });
 }
 
-// src/core/api/supabase-client.js
+// src/core/auth/auth-storage-key.js
 var PROJECT_URL = /^https:\/\/[a-z0-9-]+\.supabase\.co$/i;
+var HUB_CODE_PATTERN2 = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+function createAuthStorageKey(projectUrl, hubCode) {
+  const url = typeof projectUrl === "string" ? projectUrl.trim().replace(/\/+$/, "") : "";
+  const code = typeof hubCode === "string" ? hubCode.trim() : "";
+  if (!PROJECT_URL.test(url)) {
+    throw new PlatformError({ code: "INVALID_SUPABASE_CONFIGURATION", category: "configuration" });
+  }
+  if (!HUB_CODE_PATTERN2.test(code)) {
+    throw new PlatformError({ code: "INVALID_HUB_CODE", category: "configuration" });
+  }
+  const projectRef = new URL(url).hostname.split(".")[0];
+  return `sb-${projectRef}-auth-token--${code}`;
+}
+
+// src/core/api/supabase-client.js
 function createSupabaseClient(config = {}, dependencies = {}) {
   if (dependencies.client) return dependencies.client;
   const projectUrl = typeof config.projectUrl === "string" ? config.projectUrl.trim().replace(/\/+$/, "") : "";
   const publishableKey = typeof config.publishableKey === "string" ? config.publishableKey.trim() : "";
+  const hubCode = typeof config.hubCode === "string" ? config.hubCode.trim() : "";
   if (!PROJECT_URL.test(projectUrl) || !publishableKey) {
     throw new PlatformError({ code: "INVALID_SUPABASE_CONFIGURATION", category: "configuration" });
   }
@@ -212,13 +228,16 @@ function createSupabaseClient(config = {}, dependencies = {}) {
   if (typeof createClient !== "function") {
     throw new PlatformError({ code: "SUPABASE_SDK_UNAVAILABLE", category: "configuration" });
   }
-  return createClient(projectUrl, publishableKey, {
-    auth: {
-      persistSession: true,
-      autoRefreshToken: true,
-      detectSessionInUrl: true
-    }
-  });
+  const auth = {
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: true,
+    storageKey: createAuthStorageKey(projectUrl, hubCode)
+  };
+  if (dependencies.authStorage) {
+    auth.storage = dependencies.authStorage;
+  }
+  return createClient(projectUrl, publishableKey, { auth });
 }
 
 // src/core/api/learner-api.js
@@ -447,7 +466,7 @@ function createAuthService({ client, logger, resolveRedirectUrl, cleanAuthCallba
   }
   async function signOut() {
     try {
-      const result = await client.auth.signOut();
+      const result = await client.auth.signOut({ scope: "local" });
       if (result?.error) throw result.error;
     } catch (error) {
       logger?.warn("auth.sign-out.failed", { code: error?.code });
@@ -2291,6 +2310,7 @@ export {
   createActivityStateStore,
   createAssignmentService,
   createAuthService,
+  createAuthStorageKey,
   createEnrolmentService,
   createFeatureFlags,
   createFormativeMarkingService,

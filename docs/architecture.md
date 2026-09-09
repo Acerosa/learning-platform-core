@@ -28,6 +28,11 @@ Core must not own curriculum schemas, hub-specific workflows, React presentation
 The browser is an untrusted presentation and evidence-capture client.
 
 - Supabase Auth establishes a session. The SDK owns token storage and refresh.
+  Persistence is hub-scoped: `createPlatform()` stores the session under
+  `sb-<project-ref>-auth-token--<hubCode>`. Same-origin hubs therefore keep
+  independent browser logins. Presence of a hub-specific token is not
+  enrolment proof; hub access still comes from `api.resolve_learner_hub_access`
+  and `api.my_hub_assignments`.
 - Backend functions derive identity from `auth.uid()`.
 - The browser never selects or submits learner, enrolment or assignment IDs as authority.
 - Registration options come from `api.registration_options()` after authentication, or from the single hub-eligible key returned by `api.resolve_learner_hub_access` so a hub does not present the platform-wide picker.

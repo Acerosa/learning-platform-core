@@ -4,6 +4,16 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## [Unreleased]
 
+### Added
+
+- Hub-scoped Supabase Auth persistence. `createPlatform()` / `createSupabaseClient()`
+  store the learner session under `sb-<project-ref>-auth-token--<hubCode>` so
+  same-origin GitHub Pages hubs no longer share one browser login. Sign-out uses
+  `{ scope: "local" }` and does not clear other hubs or `localStorage` wholesale.
+  Existing shared sessions are not copied; learners sign in once per hub.
+  `createAuthStorageKey()` is exported from `@learning-platform/core/advanced`.
+  Hub-scoped storage is not an authorisation boundary.
+
 ## 0.2.12 - 2026-09-09
 
 ### Added

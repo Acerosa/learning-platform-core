@@ -54,7 +54,8 @@ export function fakeSupabase({
         if (authErrors.signUp) return { data: null, error: authErrors.signUp };
         return { data: { session: currentSession, user: { id: "auth-user" } }, error: null };
       },
-      async signOut() {
+      async signOut(options) {
+        calls.push({ type: "sign-out", options });
         currentSession = null;
         authListener?.("SIGNED_OUT", null);
         return { error: authErrors.signOut || null };
