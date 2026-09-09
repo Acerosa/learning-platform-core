@@ -4,6 +4,12 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## [Unreleased]
 
+### Changed
+
+- Create-account status copy is the same for a new email, a repeated signup,
+  and an unconfirmed existing email. It does not claim a confirmation email
+  was sent, and it does not confirm whether the address already has an account.
+
 ## 0.2.14 - 2026-09-09
 
 ### Security

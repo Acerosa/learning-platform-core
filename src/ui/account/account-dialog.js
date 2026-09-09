@@ -6,6 +6,8 @@ const SIGN_IN_EMAIL_HINT = "Use the email address you used when creating your ac
 const REGISTER_EMAIL_HINT = "Use this email to sign in later.";
 const STUDENT_ID_HINT = "Use your college Student ID.";
 const NEW_LEARNER_GUIDANCE = "New here? Create an account first.";
+const SIGNUP_STATUS =
+  "If this is a new account, check your email to confirm it. If you already created an account on another learning hub, sign in using the same email and password.";
 
 export function createAccountDialog({
   document = globalThis.document,
@@ -109,16 +111,10 @@ export function createAccountDialog({
           onboardingService.savePending(details);
           const result = await authService.signUp(accountCheck.value.email, accountCheck.value.password);
           password.input.value = "";
-          if (result.existingAccount) {
+          if (result.existingAccount || result.needsConfirmation) {
             setMode("sign-in");
             email.input.value = accountCheck.value.email;
-            status.textContent = "An account with this email already exists. Sign in with your existing email and password.";
-            return;
-          }
-          if (result.needsConfirmation) {
-            setMode("sign-in");
-            email.input.value = accountCheck.value.email;
-            status.textContent = "If this is a new email address, check your inbox to confirm the account, then return here and sign in.";
+            status.textContent = SIGNUP_STATUS;
             return;
           }
           await continueAfterAuthentication();
@@ -156,8 +152,8 @@ export function createAccountDialog({
       INVALID_FIRST_NAME: "Enter your first name.",
       INVALID_SURNAME: "Enter your last name.",
       INVALID_STUDENT_NUMBER: "Enter your Student ID.",
-      user_already_exists: "An account with this email already exists. Sign in with your existing email and password.",
-      email_exists: "An account with this email already exists. Sign in with your existing email and password."
+      user_already_exists: SIGNUP_STATUS,
+      email_exists: SIGNUP_STATUS
     };
     return messages[code] || "The account request could not be completed. Check your details and try again.";
   }
@@ -172,9 +168,17 @@ export function createAccountDialog({
     modal.body.replaceChildren(onboardingView.element);
   }
 
-  function open(trigger) {
-    if (authService.isSignedIn() && learnerContext.getState().status === "onboarding-required") showOnboarding();
-    else modal.body.replaceChildren(buildAuthView());
+  function open(trigger, options = {}) {
+    if (
+      authService.isSignedIn()
+      && learnerContext.getState().status === "onboarding-required"
+      && options.mode !== "register"
+    ) {
+      showOnboarding();
+    } else {
+      if (options.mode === "register" || options.mode === "sign-in") mode = options.mode;
+      modal.body.replaceChildren(buildAuthView());
+    }
     modal.open(trigger);
   }
 

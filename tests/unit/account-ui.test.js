@@ -99,7 +99,10 @@ test("account dialog keeps sign-in and registration distinct and persists no cre
   assert.equal(pending.includes("000123"), true);
   assert.equal(pending.includes("ada@example.test"), false);
   assert.equal(pending.includes("password-123"), false);
-  assert.match(account.element.textContent, /If this is a new email address, check your inbox to confirm/i);
+  assert.match(
+    account.element.textContent,
+    /If this is a new account, check your email to confirm it.*already created an account on another learning hub, sign in/i
+  );
   assert.deepEqual(calls.at(-1), { type: "sign-up", email: "ada@example.test", password: "password-123" });
 
   tabs.find((tab) => tab.textContent === "Sign in").click();
@@ -253,12 +256,60 @@ test("repeated signup for an existing email asks the learner to sign in", async 
   account.element.querySelector("#lp-account-password").value = "password-123";
   account.element.querySelector("form").dispatchEvent(new runtime.window.Event("submit", { bubbles: true, cancelable: true }));
   await flush();
-  assert.match(
-    account.element.querySelector(".lp-form__status").textContent,
-    /An account with this email already exists/i
-  );
-  assert.equal(account.element.querySelector(".lp-form__status").textContent.includes("Check your email"), false);
+  const status = account.element.querySelector(".lp-form__status").textContent;
+  assert.match(status, /If this is a new account, check your email to confirm it/i);
+  assert.match(status, /already created an account on another learning hub, sign in/i);
+  assert.equal(status.includes("An account with this email already exists"), false);
+  assert.equal(status.includes("confirmation email was sent"), false);
   assert.deepEqual(runtimeCalls, [{ type: "sign-up", email: "ada@example.test", password: "password-123" }]);
+});
+
+test("new, confirmed, and unconfirmed signup outcomes share enumeration-safe copy", async () => {
+  const outcomes = [
+    { needsConfirmation: true, existingAccount: false },
+    { needsConfirmation: false, existingAccount: true },
+    { needsConfirmation: false, existingAccount: true, unconfirmed: true }
+  ];
+  for (const outcome of outcomes) {
+    const { account, runtime } = openAccount({
+      authService: {
+        isSignedIn: () => false,
+        signIn: async () => {},
+        signUp: async () => outcome
+      }
+    });
+    Array.from(account.element.querySelectorAll('[role="tab"]'))
+      .find((tab) => tab.textContent === "Create account")
+      .click();
+    account.element.querySelector("#lp-register-first-name").value = "Ada";
+    account.element.querySelector("#lp-register-surname").value = "Lovelace";
+    account.element.querySelector("#lp-register-student-number").value = "000123";
+    account.element.querySelector("#lp-account-email").value = "ada@example.test";
+    account.element.querySelector("#lp-account-password").value = "password-123";
+    account.element.querySelector("form").dispatchEvent(new runtime.window.Event("submit", { bubbles: true, cancelable: true }));
+    await flush();
+    const status = account.element.querySelector(".lp-form__status").textContent;
+    assert.match(status, /If this is a new account, check your email to confirm it/i);
+    assert.match(status, /already created an account on another learning hub, sign in/i);
+    account.destroy();
+  }
+});
+
+test("hubs can open the dialog directly on create-account", () => {
+  const { account, runtime } = openAccount();
+  account.close();
+  account.open(null, { mode: "register" });
+  assert.deepEqual(visibleFieldLabels(account.element), [
+    "First name",
+    "Last name",
+    "Student ID",
+    "Email",
+    "Password"
+  ]);
+  assert.equal(
+    runtime.window.document.querySelector('[role="tab"][aria-selected="true"]')?.textContent,
+    "Create account"
+  );
 });
 
 test("mapped auth errors remain PlatformError instances for logging", async () => {
