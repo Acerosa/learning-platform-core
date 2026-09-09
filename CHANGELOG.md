@@ -4,11 +4,14 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## [Unreleased]
 
+## 0.2.15 - 2026-09-09
+
 ### Changed
 
 - Create-account status copy is the same for a new email, a repeated signup,
   and an unconfirmed existing email. It does not claim a confirmation email
   was sent, and it does not confirm whether the address already has an account.
+  Hubs can open the dialog on Create account. Do not retag `v0.2.14`.
 
 ## 0.2.14 - 2026-09-09
 
