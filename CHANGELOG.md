@@ -4,6 +4,8 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## [Unreleased]
 
+## 0.2.13 - 2026-09-09
+
 ### Added
 
 - Hub-scoped Supabase Auth persistence. `createPlatform()` / `createSupabaseClient()`
