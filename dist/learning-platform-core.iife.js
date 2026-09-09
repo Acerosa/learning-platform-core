@@ -105,20 +105,32 @@ var LearningPlatformCore = (() => {
     over_email_send_rate_limit: "Too many account emails have been requested. Please wait a few minutes and try again.",
     user_already_exists: "An account with this email already exists. Sign in with your existing email and password.",
     email_exists: "An account with this email already exists. Sign in with your existing email and password.",
-    invalid_class_key: "Could not join your class. Check the registration key and try again."
+    invalid_class_key: "Could not join your class. Check the registration key and try again.",
+    student_number_already_linked: "That Student ID is already linked to another learning account. Sign in with that account, or use your own Student ID.",
+    onboarding_conflict: "Your signed-in account does not match that learner profile. Sign in with the account you used before, or contact your tutor.",
+    auth_account_already_linked: "Your signed-in account does not match that learner profile. Sign in with the account you used before, or contact your tutor.",
+    profile_required: "Finish creating your learner profile before joining a class."
   });
   var OPERATION_MESSAGES = Object.freeze({
     "sign-in": "We couldn't sign you in. Please try again.",
     "sign-up": "We couldn't create your account. Please try again."
   });
   var CODE_RULES = Object.freeze([
-    [/AUTH|CREDENTIAL|SESSION|EMAIL_NOT_CONFIRMED|RATE_LIMIT/i, "authentication"],
+    [/STUDENT_NUMBER|ONBOARDING_CONFLICT|INVALID|VALIDATION|REQUIRED|MISMATCH/i, "validation"],
+    [/AUTH|CREDENTIAL|SESSION|EMAIL_NOT_CONFIRMED|RATE_LIMIT|AUTH_ACCOUNT_ALREADY_LINKED/i, "authentication"],
     [/PERMISSION|FORBIDDEN|RLS|42501/i, "authorisation"],
-    [/INVALID|VALIDATION|REQUIRED|MISMATCH/i, "validation"],
     [/NETWORK|FETCH|TIMEOUT|ABORT|OFFLINE/i, "network"],
     [/SUBMIT|ATTEMPT|ASSIGNMENT|ACTIVITY_VERSION/i, "submission"],
     [/CONFIG|SUPABASE_URL|PUBLISHABLE_KEY/i, "configuration"]
   ]);
+  function apiCodeFrom(error) {
+    const candidates = [error?.code, error?.message, error?.details, error?.hint];
+    for (const candidate of candidates) {
+      const value = String(candidate || "").trim();
+      if (/^[A-Z][A-Z0-9_]+$/.test(value) && !/^\d+$/.test(value)) return value;
+    }
+    return String(error?.code || error?.name || "PLATFORM_ERROR");
+  }
   var PlatformError = class extends Error {
     constructor({
       code = "UNEXPECTED_ERROR",
@@ -155,7 +167,7 @@ var LearningPlatformCore = (() => {
   }
   function mapPlatformError(error, overrides = {}) {
     if (error instanceof PlatformError && Object.keys(overrides).length === 0) return error;
-    const sourceCode = String(overrides.code || error?.code || error?.name || "PLATFORM_ERROR");
+    const sourceCode = String(overrides.code || apiCodeFrom(error) || "PLATFORM_ERROR");
     const category = overrides.category || categoryFor(sourceCode, error);
     const learnerMessage = overrides.learnerMessage || messageForCode(sourceCode) || OPERATION_MESSAGES[overrides.operation] || DEFAULT_MESSAGES[category];
     return new PlatformError({

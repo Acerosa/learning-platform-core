@@ -4,6 +4,14 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## [Unreleased]
 
+## 0.2.16 - 2026-09-09
+
+### Fixed
+
+- PostgREST onboarding/join failures that return a SQLSTATE code with an API
+  message such as `STUDENT_NUMBER_ALREADY_LINKED` map to learner-safe copy
+  instead of the generic platform message. Do not retag `v0.2.15`.
+
 ## 0.2.15 - 2026-09-09
 
 ### Changed
