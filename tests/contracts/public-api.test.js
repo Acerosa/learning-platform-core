@@ -92,6 +92,8 @@ const ADVANCED_EXPORTS = Object.freeze([
   "createSupabaseClient",
   "derivePlatformState",
   "isHubEnrolledStatus",
+  "isRetryableAuthNetworkError",
+  "isStaleAuthSessionError",
   "mapPlatformError",
   "reconcileActivityState",
   "redact",

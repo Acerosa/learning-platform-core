@@ -5,6 +5,7 @@ import { createPlatformState } from "./core/state/platform-state.js";
 import { createSupabaseClient } from "./core/api/supabase-client.js";
 import { createLearnerApi } from "./core/api/learner-api.js";
 import { createAuthService } from "./core/auth/auth-service.js";
+import { isRetryableAuthNetworkError } from "./core/auth/stale-auth-session.js";
 import { cleanAuthCallbackFromUrl, resolveAuthRedirectUrl } from "./core/auth/auth-redirect-url.js";
 import { createSessionService } from "./core/session/session-service.js";
 import { createProfileService } from "./core/profile/profile-service.js";
@@ -107,6 +108,7 @@ export function createPlatform(options = {}, dependencies = {}) {
     if (authState.status === "signing-in") state.transition("signing-in");
     if (authState.status === "signed-out") {
       hubEnrolmentContextSynced = false;
+      onboarding.clearPending();
       state.transition("signed-out");
     }
     if (authState.status === "error") state.transition("error", authState.error);
@@ -164,7 +166,9 @@ export function createPlatform(options = {}, dependencies = {}) {
     state.transition(runtimeWindow?.navigator?.onLine === false ? "offline" : "loading");
     if (runtimeWindow?.navigator?.onLine === false) return state.getState();
     await auth.initialise();
-    if (auth.isSignedIn()) await learner.refresh();
+    // Learner RPCs only after Auth identity is proven (not merely a cached JWT).
+    if (auth.getState().status === "authenticated") await learner.refresh();
+    else if (auth.getState().status === "signed-out") onboarding.clearPending();
     return state.getState();
   }
 
@@ -241,8 +245,18 @@ export function createPlatform(options = {}, dependencies = {}) {
       });
     } catch (error) {
       logger?.warn("hub.session.refresh.failed", { code: error?.code || error?.name });
+      if (error?.category === "network" || isRetryableAuthNetworkError(error)) {
+        state.transition("error", error);
+        return Object.freeze({
+          ok: false,
+          status: "error",
+          requiresSignIn: false,
+          learnerMessage: error?.learnerMessage || "The learner service could not be reached. Check your connection and try again.",
+          error
+        });
+      }
       onboarding.clearPending();
-      await auth.signOut();
+      if (auth.isSignedIn()) await auth.signOut();
       state.transition("signed-out");
       return Object.freeze({
         ok: false,

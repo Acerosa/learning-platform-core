@@ -42,6 +42,20 @@ export function fakeSupabase({
     auth: {
       onAuthStateChange(listener) { authListener = listener; return { data: { subscription: { unsubscribe() {} } } }; },
       async getSession() { return { data: { session: currentSession }, error: authErrors.getSession || null }; },
+      async getUser() {
+        calls.push({ type: "get-user" });
+        if (authErrors.getUser) return { data: { user: null }, error: authErrors.getUser };
+        if (!currentSession) return { data: { user: null }, error: { name: "AuthSessionMissingError", message: "Auth session missing!", status: 400 } };
+        const user = currentSession.user || { id: "auth-user" };
+        return { data: { user }, error: null };
+      },
+      async refreshSession() {
+        calls.push({ type: "refresh-session" });
+        if (authErrors.refreshSession) return { data: { session: null }, error: authErrors.refreshSession };
+        if (!currentSession) return { data: { session: null }, error: { name: "AuthSessionMissingError", message: "Auth session missing!", status: 400 } };
+        currentSession = { ...currentSession, access_token: "refreshed-access-token" };
+        return { data: { session: currentSession }, error: null };
+      },
       async signInWithPassword(credentials) {
         calls.push({ type: "sign-in", credentials });
         if (authErrors.signIn) return { data: null, error: authErrors.signIn };
