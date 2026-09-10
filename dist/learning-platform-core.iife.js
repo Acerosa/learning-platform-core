@@ -1396,6 +1396,17 @@ var LearningPlatformCore = (() => {
       requireSession();
       const checked = validateProfile(details);
       if (!checked.ok) throw new PlatformError({ code: checked.code, category: "validation" });
+      const learnerState = learnerContext?.getState?.();
+      const existingNumber = clean3(learnerState?.context?.studentNumber);
+      if (learnerState?.status === "authenticated" && existingNumber && existingNumber === checked.value.studentNumber) {
+        clearPending();
+        return Object.freeze({
+          student_number: existingNumber,
+          first_name: learnerState.context?.firstName || checked.value.firstName,
+          surname: learnerState.context?.surname || checked.value.surname,
+          idempotent: true
+        });
+      }
       try {
         const result2 = await api.completeOnboarding({
           p_first_name: checked.value.firstName,

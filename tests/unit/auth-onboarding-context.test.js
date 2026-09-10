@@ -115,3 +115,32 @@ test("onboarding completes a profile without a learner-chosen group", async () =
   });
   assert.equal(refreshed, true);
 });
+
+test("onboarding.complete skips RPC when Auth already has the same linked profile", async () => {
+  let rpcCalls = 0;
+  const service = createOnboardingService({
+    api: {
+      completeOnboarding: async () => {
+        rpcCalls += 1;
+        return [{ student_number: "STU-OLD" }];
+      }
+    },
+    authService: { isSignedIn: () => true },
+    learnerContext: {
+      getState: () => ({
+        status: "authenticated",
+        context: { firstName: "Existing", surname: "Learner", studentNumber: "STU-OLD" }
+      }),
+      refresh: async () => {}
+    },
+    storage: memoryStorage()
+  });
+  const result = await service.complete({
+    firstName: "Existing",
+    surname: "Learner",
+    studentNumber: "STU-OLD"
+  });
+  assert.equal(rpcCalls, 0);
+  assert.equal(result.idempotent, true);
+  assert.equal(result.student_number, "STU-OLD");
+});
