@@ -2098,7 +2098,8 @@ var LearningPlatformCore = (() => {
       const gaps = Array.isArray(block?.content?.gaps) && block.content.gaps.length ? block.content.gaps : [{ id: "gap" }];
       return gaps.map((gap) => {
         const gapId = String(gap?.id || "").trim() || "gap";
-        return evidence.singleChoice(`${questionId}:${gapId}`, placements[gapId]);
+        const evidenceKey = gaps.length === 1 ? questionId : `${questionId}:${gapId}`;
+        return evidence.singleChoice(evidenceKey, placements[gapId]);
       });
     }
     throw new PlatformError({ code: "UNSUPPORTED_BLOCK_TYPE", category: "validation" });

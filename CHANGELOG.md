@@ -4,6 +4,15 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## [Unreleased]
 
+## 0.2.21 - 2026-09-10
+
+### Fixed
+
+- Fill-gap / phrase-completion formative evidence identity matches backend projection:
+  single-gap blocks use the package `questionId`; multi-gap blocks use `questionId:gapId`.
+  Aligns Core Check submissions with Phase 1 catalogue marking for activities such as
+  Unit 3 definition-gap.
+
 ## 0.2.20 - 2026-09-10
 
 ### Fixed
