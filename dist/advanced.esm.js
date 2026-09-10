@@ -499,11 +499,36 @@ function createAuthService({ client, logger, resolveRedirectUrl, cleanAuthCallba
     }
     return true;
   }
+  async function refreshSession() {
+    try {
+      const result = await client.auth.refreshSession();
+      if (result?.error) throw result.error;
+      const session = result?.data?.session || null;
+      if (!session) {
+        await signOut();
+        throw new PlatformError({
+          code: "SESSION_REFRESH_REQUIRED",
+          category: "authentication",
+          learnerMessage: "Your session needs to be refreshed. Please sign in again."
+        });
+      }
+      return publish({ status: "authenticated", session, error: null });
+    } catch (error) {
+      const mapped = mapPlatformError(error, {
+        operation: "refresh-session",
+        category: "authentication",
+        learnerMessage: "Your session needs to be refreshed. Please sign in again."
+      });
+      await signOut();
+      throw mapped;
+    }
+  }
   return Object.freeze({
     initialise,
     signIn,
     signUp,
     signOut,
+    refreshSession,
     subscribe,
     getState: () => state,
     getSession: () => state.session,
@@ -662,7 +687,7 @@ function createHubAccessService({ api, hubCode, courseKey } = {}) {
   async function join(classKey) {
     const rows = await api.joinLearnerHubGroup({
       p_hub_code: hubCode,
-      p_class_key: clean2(classKey)
+      p_class_key: clean2(classKey).toLowerCase()
     });
     const row = Array.isArray(rows) ? rows[0] : rows;
     return mapAccess(row);
@@ -772,7 +797,7 @@ function createOnboardingService({ api, authService, learnerContext, storage = g
   }
   async function joinClass(classKey) {
     requireSession();
-    const key = clean3(classKey);
+    const key = clean3(classKey).toLowerCase();
     if (!key) throw new PlatformError({ code: "INVALID_CLASS_KEY", category: "validation" });
     if (!hubAccessService?.join) {
       throw new PlatformError({

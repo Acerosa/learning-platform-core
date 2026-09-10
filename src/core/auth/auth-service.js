@@ -109,11 +109,41 @@ export function createAuthService({ client, logger, resolveRedirectUrl, cleanAut
     return true;
   }
 
+  /**
+   * Refresh the current hub's Auth session tokens only.
+   * Does not touch other hubs' per-hub storage keys.
+   */
+  async function refreshSession() {
+    try {
+      const result = await client.auth.refreshSession();
+      if (result?.error) throw result.error;
+      const session = result?.data?.session || null;
+      if (!session) {
+        await signOut();
+        throw new PlatformError({
+          code: "SESSION_REFRESH_REQUIRED",
+          category: "authentication",
+          learnerMessage: "Your session needs to be refreshed. Please sign in again."
+        });
+      }
+      return publish({ status: "authenticated", session, error: null });
+    } catch (error) {
+      const mapped = mapPlatformError(error, {
+        operation: "refresh-session",
+        category: "authentication",
+        learnerMessage: "Your session needs to be refreshed. Please sign in again."
+      });
+      await signOut();
+      throw mapped;
+    }
+  }
+
   return Object.freeze({
     initialise,
     signIn,
     signUp,
     signOut,
+    refreshSession,
     subscribe,
     getState: () => state,
     getSession: () => state.session,

@@ -4,6 +4,21 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## [Unreleased]
 
+## 0.2.17 - 2026-09-09
+
+### Added
+
+- `platform.refreshHubSession()` refreshes the current hub Auth session, re-resolves
+  hub access, and reloads hub assignments. On failure it uses local sign-out only
+  (`scope: "local"`) and clears this hub's pending-onboarding key. Other hubs' Phase 2
+  storage keys are left untouched.
+
+### Changed
+
+- Class keys passed to `joinClass` / hub-access join are normalised to lowercase
+  before the join RPC so tutor-facing uppercase display keys still match stored
+  kebab-case values.
+
 ## 0.2.16 - 2026-09-09
 
 ### Fixed

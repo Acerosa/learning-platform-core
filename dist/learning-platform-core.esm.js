@@ -617,11 +617,36 @@ function createAuthService({ client, logger, resolveRedirectUrl, cleanAuthCallba
     }
     return true;
   }
+  async function refreshSession() {
+    try {
+      const result2 = await client.auth.refreshSession();
+      if (result2?.error) throw result2.error;
+      const session = result2?.data?.session || null;
+      if (!session) {
+        await signOut();
+        throw new PlatformError({
+          code: "SESSION_REFRESH_REQUIRED",
+          category: "authentication",
+          learnerMessage: "Your session needs to be refreshed. Please sign in again."
+        });
+      }
+      return publish({ status: "authenticated", session, error: null });
+    } catch (error) {
+      const mapped = mapPlatformError(error, {
+        operation: "refresh-session",
+        category: "authentication",
+        learnerMessage: "Your session needs to be refreshed. Please sign in again."
+      });
+      await signOut();
+      throw mapped;
+    }
+  }
   return Object.freeze({
     initialise,
     signIn,
     signUp,
     signOut,
+    refreshSession,
     subscribe,
     getState: () => state,
     getSession: () => state.session,
@@ -709,7 +734,7 @@ function createHubAccessService({ api, hubCode, courseKey } = {}) {
   async function join(classKey) {
     const rows = await api.joinLearnerHubGroup({
       p_hub_code: hubCode,
-      p_class_key: clean(classKey)
+      p_class_key: clean(classKey).toLowerCase()
     });
     const row = Array.isArray(rows) ? rows[0] : rows;
     return mapAccess(row);
@@ -1313,7 +1338,7 @@ function createOnboardingService({ api, authService, learnerContext, storage = g
   }
   async function joinClass(classKey) {
     requireSession();
-    const key = clean3(classKey);
+    const key = clean3(classKey).toLowerCase();
     if (!key) throw new PlatformError({ code: "INVALID_CLASS_KEY", category: "validation" });
     if (!hubAccessService?.join) {
       throw new PlatformError({
@@ -2558,6 +2583,83 @@ function createPlatform(options2 = {}, dependencies = {}) {
     if (auth.isSignedIn()) await learner.refresh();
     return state.getState();
   }
+  const SESSION_REFRESH_COPY = "Your session needs to be refreshed. Please sign in again.";
+  async function refreshHubSession() {
+    try {
+      if (!auth.isSignedIn()) {
+        onboarding.clearPending();
+        state.transition("signed-out");
+        return Object.freeze({
+          ok: false,
+          status: "signed-out",
+          requiresSignIn: true,
+          learnerMessage: SESSION_REFRESH_COPY
+        });
+      }
+      await auth.refreshSession();
+      await learner.refresh();
+      const access = await hubAccess.resolve();
+      if (access.status === "profile_required") {
+        state.transition("onboarding-required");
+        return Object.freeze({
+          ok: true,
+          status: "onboarding-required",
+          requiresSignIn: false,
+          access
+        });
+      }
+      if (isHubEnrolledStatus(access.status)) {
+        hubEnrolmentContextSynced = false;
+        if (access.groupCode) {
+          await learner.refresh({ preferredGroupCode: access.groupCode });
+        }
+        const assignmentRows = await assignments.getHubAssignments(config.hubCode);
+        const next = Array.isArray(assignmentRows) && assignmentRows.length ? "ready" : "no-assignments";
+        state.transition(next);
+        return Object.freeze({
+          ok: true,
+          status: next,
+          requiresSignIn: false,
+          access,
+          assignmentCount: Array.isArray(assignmentRows) ? assignmentRows.length : 0
+        });
+      }
+      if (access.status === "ambiguous") {
+        const error = new PlatformError({
+          code: "HUB_ACCESS_AMBIGUOUS",
+          category: "platform",
+          learnerMessage: "Your tutor needs to place you in the correct class for this hub."
+        });
+        state.transition("error", error);
+        return Object.freeze({
+          ok: false,
+          status: "error",
+          requiresSignIn: false,
+          access,
+          error
+        });
+      }
+      state.transition("no-enrolment");
+      return Object.freeze({
+        ok: true,
+        status: "no-enrolment",
+        requiresSignIn: false,
+        access
+      });
+    } catch (error) {
+      logger?.warn("hub.session.refresh.failed", { code: error?.code || error?.name });
+      onboarding.clearPending();
+      await auth.signOut();
+      state.transition("signed-out");
+      return Object.freeze({
+        ok: false,
+        status: "signed-out",
+        requiresSignIn: true,
+        learnerMessage: error?.learnerMessage || SESSION_REFRESH_COPY,
+        error
+      });
+    }
+  }
   function destroy() {
     unsubscribers.forEach((unsubscribe) => unsubscribe());
     runtimeWindow?.removeEventListener?.("offline", offline);
@@ -2581,6 +2683,7 @@ function createPlatform(options2 = {}, dependencies = {}) {
     theme,
     features,
     initialise,
+    refreshHubSession,
     destroy
   });
 }
