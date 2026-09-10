@@ -4,6 +4,15 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## [Unreleased]
 
+## 0.2.18 - 2026-09-10
+
+### Fixed
+
+- `onboarding.complete()` is a no-op when the Auth session already has a linked
+  learner profile with the same Student ID. Returning learners joining another
+  hub must use `joinClass` only; re-calling complete must not hit
+  `complete_learner_onboarding` and surface false profile conflicts.
+
 ## 0.2.17 - 2026-09-09
 
 ### Added
