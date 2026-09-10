@@ -430,3 +430,100 @@ test("INVALID_ACTIVITY_VERSION maps to a refresh/tutor learner message", async (
       && /not available for checking/i.test(error.learnerMessage)
   );
 });
+
+test("fill-gap single-gap block uses bare package questionId evidence", async () => {
+  const { marking, calls } = service([{
+    question_id: "u3-w01-definition-gap:g1",
+    awarded_score: 1,
+    max_score: 1,
+    is_correct: true,
+    requires_review: false,
+    marking_source: "server"
+  }]);
+  const result = await marking.markBlock({
+    activityKey: "u3-w01-definition-gap",
+    activityVersion: "1.0.0",
+    block: {
+      id: "g1",
+      type: "fill-gap",
+      content: {
+        questionId: "u3-w01-definition-gap:g1",
+        gaps: [{ id: "blank", correctOptionId: "information" }],
+        options: [{ id: "information", label: "information" }]
+      }
+    },
+    responses: { blank: "information" }
+  });
+  assert.deepEqual(calls[0].p_responses, [{
+    question_id: "u3-w01-definition-gap:g1",
+    response_type: "single-choice",
+    response_payload: { optionId: "information" }
+  }]);
+  assert.equal(result.correct, true);
+});
+
+test("fill-gap multi-gap block suffixes questionId:gapId evidence keys", async () => {
+  const { marking, calls } = service((payload) => payload.p_responses.map((item) => ({
+    question_id: item.question_id,
+    awarded_score: 1,
+    max_score: 1,
+    is_correct: true,
+    requires_review: false,
+    marking_source: "server"
+  })));
+  await marking.markBlock({
+    activityKey: "demo-phrase",
+    activityVersion: "1.0.0",
+    block: {
+      id: "phrase",
+      type: "phrase-completion",
+      content: {
+        questionId: "demo-phrase",
+        gaps: [{ id: "g1" }, { id: "g2" }]
+      }
+    },
+    responses: { g1: "a", g2: "b" }
+  });
+  assert.deepEqual(calls[0].p_responses, [
+    {
+      question_id: "demo-phrase:g1",
+      response_type: "single-choice",
+      response_payload: { optionId: "a" }
+    },
+    {
+      question_id: "demo-phrase:g2",
+      response_type: "single-choice",
+      response_payload: { optionId: "b" }
+    }
+  ]);
+});
+
+test("ordering evidence uses bare package questionId", async () => {
+  const { marking, calls } = service([{
+    question_id: "u3-w01-cia-incident-challenge:rank",
+    awarded_score: 0,
+    max_score: 1,
+    is_correct: null,
+    requires_review: true,
+    marking_source: "server"
+  }]);
+  const result = await marking.markBlock({
+    activityKey: "u3-w01-cia-incident-challenge",
+    activityVersion: "1.0.0",
+    block: {
+      id: "rank",
+      type: "ordering",
+      content: {
+        questionId: "u3-w01-cia-incident-challenge:rank",
+        items: [{ id: "Hacking" }, { id: "Virus" }]
+      }
+    },
+    responses: { itemIds: ["Virus", "Hacking"] }
+  });
+  assert.deepEqual(calls[0].p_responses, [{
+    question_id: "u3-w01-cia-incident-challenge:rank",
+    response_type: "ordering",
+    response_payload: { itemIds: ["Virus", "Hacking"] }
+  }]);
+  assert.equal(result.requiresReview, true);
+});

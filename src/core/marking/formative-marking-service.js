@@ -181,13 +181,17 @@ function evidenceItems(block, responses) {
   }
 
   if (type === "fill-gap" || type === "phrase-completion") {
+    // Canonical identity matches platform.project_curriculum_package:
+    // single-gap blocks use the package questionId; multi-gap blocks under one
+    // questionId use questionId:gapId (same pattern as classification items).
     const placements = asObject(responses);
     const gaps = Array.isArray(block?.content?.gaps) && block.content.gaps.length
       ? block.content.gaps
       : [{ id: "gap" }];
     return gaps.map((gap) => {
       const gapId = String(gap?.id || "").trim() || "gap";
-      return evidence.singleChoice(`${questionId}:${gapId}`, placements[gapId]);
+      const evidenceKey = gaps.length === 1 ? questionId : `${questionId}:${gapId}`;
+      return evidence.singleChoice(evidenceKey, placements[gapId]);
     });
   }
 
