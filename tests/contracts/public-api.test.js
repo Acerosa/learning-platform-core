@@ -141,6 +141,7 @@ test("createPlatform returns the canonical service facade without raw client acc
     "onboarding",
     "profile",
     "progress",
+    "refreshHubSession",
     "session",
     "state",
     "submission",

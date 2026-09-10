@@ -52,7 +52,7 @@ export function createHubAccessService({ api, hubCode, courseKey } = {}) {
   async function join(classKey) {
     const rows = await api.joinLearnerHubGroup({
       p_hub_code: hubCode,
-      p_class_key: clean(classKey)
+      p_class_key: clean(classKey).toLowerCase()
     });
     const row = Array.isArray(rows) ? rows[0] : rows;
     return mapAccess(row);

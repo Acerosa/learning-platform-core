@@ -104,7 +104,8 @@ export function createOnboardingService({ api, authService, learnerContext, stor
 
   async function joinClass(classKey) {
     requireSession();
-    const key = clean(classKey);
+    // Stored keys are lowercase kebab-case; learner input may be mixed case.
+    const key = clean(classKey).toLowerCase();
     if (!key) throw new PlatformError({ code: "INVALID_CLASS_KEY", category: "validation" });
     if (!hubAccessService?.join) {
       throw new PlatformError({
