@@ -4,6 +4,16 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## [Unreleased]
 
+## 0.2.20 - 2026-09-10
+
+### Fixed
+
+- Auth restore validates cached sessions with server-authoritative `getUser()` before
+  treating the learner as signed in. Deleted Auth users (or invalid refresh tokens)
+  trigger a one-shot local hub sign-out (`scope: "local"`) and return to Sign in —
+  never identity onboarding. Temporary network failures keep the cached session.
+  Sibling hubs' per-hub storage keys are left untouched.
+
 ## 0.2.19 - 2026-09-10
 
 ### Fixed

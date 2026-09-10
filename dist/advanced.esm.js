@@ -400,7 +400,70 @@ function cleanAuthCallbackFromUrl(location, history) {
   return true;
 }
 
+// src/core/auth/stale-auth-session.js
+var STALE_CODES = /* @__PURE__ */ new Set([
+  "user_not_found",
+  "refresh_token_not_found",
+  "session_not_found",
+  "bad_jwt",
+  "invalid_jwt",
+  "auth_session_stale"
+]);
+var STALE_MESSAGE_PATTERNS = [
+  /user from sub claim .* does not exist/i,
+  /refresh token not found/i,
+  /invalid refresh token/i,
+  /auth session missing/i
+];
+function isStaleAuthSessionError(error) {
+  if (!error || typeof error !== "object") return false;
+  const code = String(
+    /** @type {{ code?: unknown }} */
+    error.code || ""
+  ).toLowerCase();
+  if (STALE_CODES.has(code)) return true;
+  const name = String(
+    /** @type {{ name?: unknown }} */
+    error.name || ""
+  );
+  if (name === "AuthSessionMissingError") return true;
+  const message = String(
+    /** @type {{ message?: unknown }} */
+    error.message || ""
+  );
+  return STALE_MESSAGE_PATTERNS.some((pattern) => pattern.test(message));
+}
+function isRetryableAuthNetworkError(error) {
+  if (!error || typeof error !== "object") return false;
+  const err = (
+    /** @type {{ name?: unknown, message?: unknown, code?: unknown, status?: unknown }} */
+    error
+  );
+  const name = String(err.name || "");
+  if (name === "AuthRetryableFetchError") return true;
+  const status = Number(err.status);
+  if (status === 0) return true;
+  if (Number.isFinite(status) && status >= 500) return true;
+  const code = String(err.code || "");
+  const message = String(err.message || "");
+  return /NETWORK|FETCH|TIMEOUT|ABORT|OFFLINE|FAILED TO FETCH/i.test(`${code} ${message}`);
+}
+
 // src/core/auth/auth-service.js
+var STALE_SESSION_COPY = "Your previous session is no longer valid. Please sign in again.";
+function staleSessionError(cause) {
+  return new PlatformError({
+    code: "AUTH_SESSION_STALE",
+    category: "authentication",
+    learnerMessage: STALE_SESSION_COPY,
+    diagnostic: {
+      operation: "validate-session",
+      status: Number.isFinite(cause?.status) ? cause.status : null,
+      sourceCode: String(cause?.code || cause?.name || "AUTH_SESSION_STALE")
+    },
+    cause
+  });
+}
 function createAuthService({ client, logger, resolveRedirectUrl, cleanAuthCallback } = {}) {
   if (!client?.auth) {
     throw new PlatformError({ code: "SUPABASE_AUTH_REQUIRED", category: "configuration" });
@@ -408,6 +471,8 @@ function createAuthService({ client, logger, resolveRedirectUrl, cleanAuthCallba
   let state = Object.freeze({ status: "loading", session: null, error: null });
   let initialised = false;
   let initialisePromise = null;
+  let restoreComplete = false;
+  let staleRecoveryAttempted = false;
   const listeners = /* @__PURE__ */ new Set();
   function publish(next) {
     state = Object.freeze({ ...state, ...next });
@@ -421,33 +486,130 @@ function createAuthService({ client, logger, resolveRedirectUrl, cleanAuthCallba
     listener(state);
     return () => listeners.delete(listener);
   }
+  function cleanCallbackUrl() {
+    try {
+      if (typeof cleanAuthCallback === "function") cleanAuthCallback();
+      else cleanAuthCallbackFromUrl(globalThis.location, globalThis.history);
+    } catch (error) {
+      logger?.warn("auth.callback-url.cleanup.failed", { code: error?.code });
+    }
+  }
+  async function recoverStaleSession(cause) {
+    const mapped = staleSessionError(cause);
+    if (staleRecoveryAttempted && !state.session) {
+      return publish({ status: "signed-out", session: null, error: mapped });
+    }
+    staleRecoveryAttempted = true;
+    logger?.warn("auth.session.stale", {
+      code: cause?.code || cause?.name || "AUTH_SESSION_STALE",
+      status: cause?.status ?? null
+    });
+    try {
+      await client.auth.signOut({ scope: "local" });
+    } catch (error) {
+      logger?.warn("auth.stale-sign-out.failed", { code: error?.code || error?.name });
+    }
+    return publish({ status: "signed-out", session: null, error: mapped });
+  }
+  async function validateCachedSession(session) {
+    if (typeof client.auth.getUser !== "function") {
+      return { ok: true, session };
+    }
+    let result;
+    try {
+      result = await client.auth.getUser();
+    } catch (error) {
+      if (isRetryableAuthNetworkError(error)) {
+        return { ok: false, network: true, error };
+      }
+      if (isStaleAuthSessionError(error)) {
+        return { ok: false, stale: true, error };
+      }
+      throw error;
+    }
+    if (result?.error) {
+      if (isRetryableAuthNetworkError(result.error)) {
+        return { ok: false, network: true, error: result.error };
+      }
+      if (isStaleAuthSessionError(result.error)) {
+        return { ok: false, stale: true, error: result.error };
+      }
+      const status = Number(result.error.status);
+      if (status === 401 || status === 403) {
+        return { ok: false, stale: true, error: result.error };
+      }
+      return { ok: false, network: true, error: result.error };
+    }
+    if (!result?.data?.user) {
+      return {
+        ok: false,
+        stale: true,
+        error: { code: "user_not_found", message: "Auth user missing", status: 403 }
+      };
+    }
+    return { ok: true, session, user: result.data.user };
+  }
   async function initialise() {
     if (initialisePromise) return initialisePromise;
     if (initialised) return state;
     initialised = true;
+    restoreComplete = false;
     client.auth.onAuthStateChange?.((event, session) => {
-      if (event === "SIGNED_OUT" || !session) publish({ status: "signed-out", session: null, error: null });
-      else publish({ status: "authenticated", session, error: null });
-    });
-    initialisePromise = client.auth.getSession().then((result) => {
-      if (result.error) throw result.error;
-      const session = result.data?.session || null;
-      if (session) {
-        try {
-          if (typeof cleanAuthCallback === "function") cleanAuthCallback();
-          else cleanAuthCallbackFromUrl(globalThis.location, globalThis.history);
-        } catch (error) {
-          logger?.warn("auth.callback-url.cleanup.failed", { code: error?.code });
-        }
+      if (!restoreComplete) return;
+      if (event === "SIGNED_OUT" || !session) {
+        const keepStale = state.error?.code === "AUTH_SESSION_STALE" ? state.error : null;
+        publish({ status: "signed-out", session: null, error: keepStale });
+      } else {
+        publish({ status: "authenticated", session, error: null });
       }
-      return publish({ status: session ? "authenticated" : "signed-out", session, error: null });
-    }).catch((error) => {
-      const mapped = mapPlatformError(error, { operation: "restore-session" });
-      publish({ status: "error", session: null, error: mapped });
-      throw mapped;
-    }).finally(() => {
-      initialisePromise = null;
     });
+    initialisePromise = (async () => {
+      try {
+        const result = await client.auth.getSession();
+        if (result.error) throw result.error;
+        const session = result.data?.session || null;
+        if (!session) {
+          restoreComplete = true;
+          return publish({ status: "signed-out", session: null, error: null });
+        }
+        const validation = await validateCachedSession(session);
+        if (validation.stale) {
+          restoreComplete = true;
+          return recoverStaleSession(validation.error);
+        }
+        if (validation.network) {
+          const mapped = mapPlatformError(validation.error, {
+            operation: "validate-session",
+            category: "network"
+          });
+          restoreComplete = true;
+          return publish({ status: "error", session, error: mapped });
+        }
+        cleanCallbackUrl();
+        restoreComplete = true;
+        staleRecoveryAttempted = false;
+        return publish({ status: "authenticated", session, error: null });
+      } catch (error) {
+        if (isRetryableAuthNetworkError(error)) {
+          const mapped2 = mapPlatformError(error, {
+            operation: "restore-session",
+            category: "network"
+          });
+          restoreComplete = true;
+          return publish({ status: "error", session: state.session, error: mapped2 });
+        }
+        if (isStaleAuthSessionError(error)) {
+          restoreComplete = true;
+          return recoverStaleSession(error);
+        }
+        const mapped = mapPlatformError(error, { operation: "restore-session" });
+        restoreComplete = true;
+        publish({ status: "error", session: null, error: mapped });
+        throw mapped;
+      } finally {
+        initialisePromise = null;
+      }
+    })();
     return initialisePromise;
   }
   async function signIn(email, password) {
@@ -455,6 +617,8 @@ function createAuthService({ client, logger, resolveRedirectUrl, cleanAuthCallba
     try {
       const result = await client.auth.signInWithPassword({ email: String(email || "").trim(), password });
       if (result.error) throw result.error;
+      staleRecoveryAttempted = false;
+      restoreComplete = true;
       return publish({ status: "authenticated", session: result.data?.session || null, error: null });
     } catch (error) {
       const mapped = mapPlatformError(error, { operation: "sign-in", category: "authentication" });
@@ -476,6 +640,7 @@ function createAuthService({ client, logger, resolveRedirectUrl, cleanAuthCallba
       const user = result.data?.user || null;
       const identities = Array.isArray(user?.identities) ? user.identities : null;
       const existingAccount = Boolean(user) && !session && Array.isArray(identities) && identities.length === 0;
+      restoreComplete = true;
       publish({ status: session ? "authenticated" : "signed-out", session, error: null });
       return Object.freeze({
         user,
@@ -496,6 +661,7 @@ function createAuthService({ client, logger, resolveRedirectUrl, cleanAuthCallba
     } catch (error) {
       logger?.warn("auth.sign-out.failed", { code: error?.code });
     } finally {
+      restoreComplete = true;
       publish({ status: "signed-out", session: null, error: null });
     }
     return true;
@@ -506,21 +672,40 @@ function createAuthService({ client, logger, resolveRedirectUrl, cleanAuthCallba
       if (result?.error) throw result.error;
       const session = result?.data?.session || null;
       if (!session) {
-        await signOut();
+        await recoverStaleSession({
+          code: "SESSION_REFRESH_REQUIRED",
+          message: "No session returned from refresh",
+          status: 400
+        });
         throw new PlatformError({
           code: "SESSION_REFRESH_REQUIRED",
           category: "authentication",
           learnerMessage: "Your session needs to be refreshed. Please sign in again."
         });
       }
+      staleRecoveryAttempted = false;
       return publish({ status: "authenticated", session, error: null });
     } catch (error) {
+      if (error instanceof PlatformError && error.code === "SESSION_REFRESH_REQUIRED") throw error;
+      if (isRetryableAuthNetworkError(error)) {
+        const mapped2 = mapPlatformError(error, {
+          operation: "refresh-session",
+          category: "network",
+          learnerMessage: "The learner service could not be reached. Check your connection and try again."
+        });
+        publish({ status: "error", session: state.session, error: mapped2 });
+        throw mapped2;
+      }
+      if (isStaleAuthSessionError(error) || Number(error?.status) === 401 || Number(error?.status) === 403) {
+        await recoverStaleSession(error);
+        throw staleSessionError(error);
+      }
       const mapped = mapPlatformError(error, {
         operation: "refresh-session",
         category: "authentication",
         learnerMessage: "Your session needs to be refreshed. Please sign in again."
       });
-      await signOut();
+      await recoverStaleSession(error);
       throw mapped;
     }
   }
@@ -2412,6 +2597,8 @@ export {
   createSupabaseClient,
   derivePlatformState,
   isHubEnrolledStatus,
+  isRetryableAuthNetworkError,
+  isStaleAuthSessionError,
   mapPlatformError,
   reconcileActivityState,
   redact,

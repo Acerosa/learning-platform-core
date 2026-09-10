@@ -1,5 +1,22 @@
 import { mapPlatformError, PlatformError } from "../errors/platform-error.js";
 import { cleanAuthCallbackFromUrl } from "./auth-redirect-url.js";
+import { isRetryableAuthNetworkError, isStaleAuthSessionError } from "./stale-auth-session.js";
+
+const STALE_SESSION_COPY = "Your previous session is no longer valid. Please sign in again.";
+
+function staleSessionError(cause) {
+  return new PlatformError({
+    code: "AUTH_SESSION_STALE",
+    category: "authentication",
+    learnerMessage: STALE_SESSION_COPY,
+    diagnostic: {
+      operation: "validate-session",
+      status: Number.isFinite(cause?.status) ? cause.status : null,
+      sourceCode: String(cause?.code || cause?.name || "AUTH_SESSION_STALE")
+    },
+    cause
+  });
+}
 
 export function createAuthService({ client, logger, resolveRedirectUrl, cleanAuthCallback } = {}) {
   if (!client?.auth) {
@@ -8,6 +25,10 @@ export function createAuthService({ client, logger, resolveRedirectUrl, cleanAut
   let state = Object.freeze({ status: "loading", session: null, error: null });
   let initialised = false;
   let initialisePromise = null;
+  /** Blocks onAuthStateChange from publishing until restore validation finishes once. */
+  let restoreComplete = false;
+  /** Guards against repeated local sign-out / getUser recovery attempts. */
+  let staleRecoveryAttempted = false;
   const listeners = new Set();
 
   function publish(next) {
@@ -23,34 +44,147 @@ export function createAuthService({ client, logger, resolveRedirectUrl, cleanAut
     return () => listeners.delete(listener);
   }
 
+  function cleanCallbackUrl() {
+    try {
+      if (typeof cleanAuthCallback === "function") cleanAuthCallback();
+      else cleanAuthCallbackFromUrl(globalThis.location, globalThis.history);
+    } catch (error) {
+      logger?.warn("auth.callback-url.cleanup.failed", { code: error?.code });
+    }
+  }
+
+  /**
+   * Local hub sign-out for a deleted/invalid Auth identity.
+   * Clears only this client's storage key (scope: local). Idempotent.
+   */
+  async function recoverStaleSession(cause) {
+    const mapped = staleSessionError(cause);
+    if (staleRecoveryAttempted && !state.session) {
+      return publish({ status: "signed-out", session: null, error: mapped });
+    }
+    staleRecoveryAttempted = true;
+    logger?.warn("auth.session.stale", {
+      code: cause?.code || cause?.name || "AUTH_SESSION_STALE",
+      status: cause?.status ?? null
+    });
+    try {
+      await client.auth.signOut({ scope: "local" });
+    } catch (error) {
+      logger?.warn("auth.stale-sign-out.failed", { code: error?.code || error?.name });
+    }
+    return publish({ status: "signed-out", session: null, error: mapped });
+  }
+
+  /**
+   * Prove a cached local session still maps to a live Auth user.
+   * getSession() alone is not authoritative after server-side user deletion.
+   */
+  async function validateCachedSession(session) {
+    if (typeof client.auth.getUser !== "function") {
+      return { ok: true, session };
+    }
+    let result;
+    try {
+      result = await client.auth.getUser();
+    } catch (error) {
+      if (isRetryableAuthNetworkError(error)) {
+        return { ok: false, network: true, error };
+      }
+      if (isStaleAuthSessionError(error)) {
+        return { ok: false, stale: true, error };
+      }
+      throw error;
+    }
+    if (result?.error) {
+      if (isRetryableAuthNetworkError(result.error)) {
+        return { ok: false, network: true, error: result.error };
+      }
+      if (isStaleAuthSessionError(result.error)) {
+        return { ok: false, stale: true, error: result.error };
+      }
+      // Unknown Auth API failure with an HTTP identity rejection → treat as stale.
+      const status = Number(result.error.status);
+      if (status === 401 || status === 403) {
+        return { ok: false, stale: true, error: result.error };
+      }
+      return { ok: false, network: true, error: result.error };
+    }
+    if (!result?.data?.user) {
+      return {
+        ok: false,
+        stale: true,
+        error: { code: "user_not_found", message: "Auth user missing", status: 403 }
+      };
+    }
+    return { ok: true, session, user: result.data.user };
+  }
+
   async function initialise() {
     if (initialisePromise) return initialisePromise;
     if (initialised) return state;
     initialised = true;
+    restoreComplete = false;
     client.auth.onAuthStateChange?.((event, session) => {
-      if (event === "SIGNED_OUT" || !session) publish({ status: "signed-out", session: null, error: null });
-      else publish({ status: "authenticated", session, error: null });
+      // Ignore events until restore validation publishes its first authoritative state.
+      // Otherwise INITIAL_SESSION can mark authenticated for a deleted Auth user.
+      if (!restoreComplete) return;
+      if (event === "SIGNED_OUT" || !session) {
+        const keepStale = state.error?.code === "AUTH_SESSION_STALE" ? state.error : null;
+        publish({ status: "signed-out", session: null, error: keepStale });
+      } else {
+        publish({ status: "authenticated", session, error: null });
+      }
     });
-    initialisePromise = client.auth.getSession()
-      .then((result) => {
+    initialisePromise = (async () => {
+      try {
+        const result = await client.auth.getSession();
         if (result.error) throw result.error;
         const session = result.data?.session || null;
-        if (session) {
-          try {
-            if (typeof cleanAuthCallback === "function") cleanAuthCallback();
-            else cleanAuthCallbackFromUrl(globalThis.location, globalThis.history);
-          } catch (error) {
-            logger?.warn("auth.callback-url.cleanup.failed", { code: error?.code });
-          }
+        if (!session) {
+          restoreComplete = true;
+          return publish({ status: "signed-out", session: null, error: null });
         }
-        return publish({ status: session ? "authenticated" : "signed-out", session, error: null });
-      })
-      .catch((error) => {
+
+        const validation = await validateCachedSession(session);
+        if (validation.stale) {
+          restoreComplete = true;
+          return recoverStaleSession(validation.error);
+        }
+        if (validation.network) {
+          const mapped = mapPlatformError(validation.error, {
+            operation: "validate-session",
+            category: "network"
+          });
+          restoreComplete = true;
+          // Keep the cached session for retry; do not claim learner readiness.
+          return publish({ status: "error", session, error: mapped });
+        }
+
+        cleanCallbackUrl();
+        restoreComplete = true;
+        staleRecoveryAttempted = false;
+        return publish({ status: "authenticated", session, error: null });
+      } catch (error) {
+        if (isRetryableAuthNetworkError(error)) {
+          const mapped = mapPlatformError(error, {
+            operation: "restore-session",
+            category: "network"
+          });
+          restoreComplete = true;
+          return publish({ status: "error", session: state.session, error: mapped });
+        }
+        if (isStaleAuthSessionError(error)) {
+          restoreComplete = true;
+          return recoverStaleSession(error);
+        }
         const mapped = mapPlatformError(error, { operation: "restore-session" });
+        restoreComplete = true;
         publish({ status: "error", session: null, error: mapped });
         throw mapped;
-      })
-      .finally(() => { initialisePromise = null; });
+      } finally {
+        initialisePromise = null;
+      }
+    })();
     return initialisePromise;
   }
 
@@ -59,6 +193,8 @@ export function createAuthService({ client, logger, resolveRedirectUrl, cleanAut
     try {
       const result = await client.auth.signInWithPassword({ email: String(email || "").trim(), password });
       if (result.error) throw result.error;
+      staleRecoveryAttempted = false;
+      restoreComplete = true;
       return publish({ status: "authenticated", session: result.data?.session || null, error: null });
     } catch (error) {
       const mapped = mapPlatformError(error, { operation: "sign-in", category: "authentication" });
@@ -81,6 +217,7 @@ export function createAuthService({ client, logger, resolveRedirectUrl, cleanAut
       const user = result.data?.user || null;
       const identities = Array.isArray(user?.identities) ? user.identities : null;
       const existingAccount = Boolean(user) && !session && Array.isArray(identities) && identities.length === 0;
+      restoreComplete = true;
       publish({ status: session ? "authenticated" : "signed-out", session, error: null });
       return Object.freeze({
         user,
@@ -104,6 +241,7 @@ export function createAuthService({ client, logger, resolveRedirectUrl, cleanAut
     } catch (error) {
       logger?.warn("auth.sign-out.failed", { code: error?.code });
     } finally {
+      restoreComplete = true;
       publish({ status: "signed-out", session: null, error: null });
     }
     return true;
@@ -112,6 +250,7 @@ export function createAuthService({ client, logger, resolveRedirectUrl, cleanAut
   /**
    * Refresh the current hub's Auth session tokens only.
    * Does not touch other hubs' per-hub storage keys.
+   * Terminal Auth errors clear this hub only; network failures keep the session.
    */
   async function refreshSession() {
     try {
@@ -119,21 +258,40 @@ export function createAuthService({ client, logger, resolveRedirectUrl, cleanAut
       if (result?.error) throw result.error;
       const session = result?.data?.session || null;
       if (!session) {
-        await signOut();
+        await recoverStaleSession({
+          code: "SESSION_REFRESH_REQUIRED",
+          message: "No session returned from refresh",
+          status: 400
+        });
         throw new PlatformError({
           code: "SESSION_REFRESH_REQUIRED",
           category: "authentication",
           learnerMessage: "Your session needs to be refreshed. Please sign in again."
         });
       }
+      staleRecoveryAttempted = false;
       return publish({ status: "authenticated", session, error: null });
     } catch (error) {
+      if (error instanceof PlatformError && error.code === "SESSION_REFRESH_REQUIRED") throw error;
+      if (isRetryableAuthNetworkError(error)) {
+        const mapped = mapPlatformError(error, {
+          operation: "refresh-session",
+          category: "network",
+          learnerMessage: "The learner service could not be reached. Check your connection and try again."
+        });
+        publish({ status: "error", session: state.session, error: mapped });
+        throw mapped;
+      }
+      if (isStaleAuthSessionError(error) || Number(error?.status) === 401 || Number(error?.status) === 403) {
+        await recoverStaleSession(error);
+        throw staleSessionError(error);
+      }
       const mapped = mapPlatformError(error, {
         operation: "refresh-session",
         category: "authentication",
         learnerMessage: "Your session needs to be refreshed. Please sign in again."
       });
-      await signOut();
+      await recoverStaleSession(error);
       throw mapped;
     }
   }
@@ -150,3 +308,5 @@ export function createAuthService({ client, logger, resolveRedirectUrl, cleanAut
     isSignedIn: () => Boolean(state.session)
   });
 }
+
+export { STALE_SESSION_COPY };

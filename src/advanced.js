@@ -10,6 +10,7 @@ export { createAuthStorageKey } from "./core/auth/auth-storage-key.js";
 export { createSupabaseClient } from "./core/api/supabase-client.js";
 export { createLearnerApi } from "./core/api/learner-api.js";
 export { createAuthService } from "./core/auth/auth-service.js";
+export { isStaleAuthSessionError, isRetryableAuthNetworkError } from "./core/auth/stale-auth-session.js";
 export { cleanAuthCallbackFromUrl, resolveAuthRedirectUrl } from "./core/auth/auth-redirect-url.js";
 export { createSessionService } from "./core/session/session-service.js";
 export { createLearnerContext } from "./core/learner/learner-context.js";

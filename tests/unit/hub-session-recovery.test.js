@@ -19,6 +19,13 @@ function createSessionClient({ refreshOk = true, session = { access_token: "a", 
       getSession() {
         return Promise.resolve({ data: { session: current }, error: null });
       },
+      async getUser() {
+        calls.push("getUser");
+        if (!current) {
+          return { data: { user: null }, error: { name: "AuthSessionMissingError", message: "Auth session missing!", status: 400 } };
+        }
+        return { data: { user: current.user || { id: "auth-user" } }, error: null };
+      },
       async refreshSession() {
         calls.push("refreshSession");
         if (!refreshOk) {
@@ -162,7 +169,7 @@ test("refreshHubSession falls back to local sign-out when refresh fails", async 
   const result = await platform.refreshHubSession();
   assert.equal(result.ok, false);
   assert.equal(result.requiresSignIn, true);
-  assert.match(result.learnerMessage, /session needs to be refreshed/i);
+  assert.match(result.learnerMessage, /no longer valid|session needs to be refreshed/i);
   assert.equal(platform.auth.isSignedIn(), false);
   assert.equal(local.getItem(tlevelKey), "tlevel-session");
   assert.ok(session.getItem("learning-platform.pending-onboarding.v1:tlevel-software-development"));
