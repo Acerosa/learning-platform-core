@@ -412,6 +412,7 @@ function createLearnerApi({ client, schema = "api", logger } = {}) {
   }
   return Object.freeze({
     getProfile: async () => (await read("my_profile", { select: "*" }))[0] || null,
+    ensureLearnerAuthLink: () => rpc("ensure_learner_auth_link"),
     getEnrolments: () => read("my_enrolments", { order: "joined_on" }),
     getAssignments: () => read("my_assignments", { order: "activity_key" }),
     getHubAssignments: (hubCode) => rpc("my_hub_assignments", { p_hub_code: hubCode }),
@@ -667,7 +668,17 @@ function createSessionService(authService) {
 
 // src/core/profile/profile-service.js
 function createProfileService(api) {
-  return Object.freeze({ getProfile: () => api.getProfile() });
+  return Object.freeze({
+    async getProfile() {
+      if (typeof api.ensureLearnerAuthLink === "function") {
+        try {
+          await api.ensureLearnerAuthLink();
+        } catch {
+        }
+      }
+      return api.getProfile();
+    }
+  });
 }
 
 // src/core/enrolment/enrolment-service.js

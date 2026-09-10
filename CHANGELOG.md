@@ -4,6 +4,14 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## [Unreleased]
 
+## 0.2.19 - 2026-09-10
+
+### Fixed
+
+- Profile load calls `ensure_learner_auth_link` before `my_profile` so Auth
+  users whose email uniquely matches an unlinked roster learner are linked
+  automatically and skip false first-time identity onboarding.
+
 ## 0.2.18 - 2026-09-10
 
 ### Fixed

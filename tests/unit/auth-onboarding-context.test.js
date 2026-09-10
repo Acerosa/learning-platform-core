@@ -144,3 +144,24 @@ test("onboarding.complete skips RPC when Auth already has the same linked profil
   assert.equal(result.idempotent, true);
   assert.equal(result.student_number, "STU-OLD");
 });
+
+test("profile service calls ensureLearnerAuthLink before getProfile", async () => {
+  let ensureCalls = 0;
+  let profileCalls = 0;
+  const { createProfileService } = await import("../../src/core/profile/profile-service.js");
+  const service = createProfileService({
+    ensureLearnerAuthLink: async () => {
+      ensureCalls += 1;
+      return [{ linked: true, student_number: "987654" }];
+    },
+    getProfile: async () => {
+      profileCalls += 1;
+      assert.equal(ensureCalls, 1);
+      return { student_number: "987654", first_name: "Ricardo", surname: "Rosa" };
+    }
+  });
+  const profile = await service.getProfile();
+  assert.equal(profile.student_number, "987654");
+  assert.equal(ensureCalls, 1);
+  assert.equal(profileCalls, 1);
+});
