@@ -1,11 +1,16 @@
-import test from "node:test";
+import test, { beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { memoryStorage } from "../helpers.js";
 import {
   createActivityStateStore,
   reconcileActivityState,
+  resetActivityStateDedupe,
   sanitizeActivityState
 } from "../../src/core/progress/activity-state.js";
+
+beforeEach(() => {
+  resetActivityStateDedupe();
+});
 
 function signedInAuth(userId = "auth-user") {
   return {

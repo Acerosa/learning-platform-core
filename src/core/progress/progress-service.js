@@ -1,4 +1,4 @@
-import { createActivityStateStore } from "./activity-state.js";
+import { getOrCreateActivityStateStore } from "./activity-state.js";
 import { canonicalActivityVersion } from "../security/hub-security-baseline.js";
 
 function firstRow(result) {
@@ -28,7 +28,7 @@ export function createProgressService(api, options = {}) {
       activityKey,
       activityVersion: canonicalActivityVersion(activityVersion)
     }),
-    createStore: (storeOptions = {}) => createActivityStateStore({
+    createStore: (storeOptions = {}) => getOrCreateActivityStateStore({
       api,
       auth: options.auth,
       storage: storeOptions.storage ?? options.storage,

@@ -13,6 +13,8 @@ import { createEnrolmentService } from "./core/enrolment/enrolment-service.js";
 import { createAssignmentService } from "./core/assignment/assignment-service.js";
 import { createHubAccessService, isHubEnrolledStatus } from "./core/hub-access/hub-access-service.js";
 import { createProgressService } from "./core/progress/progress-service.js";
+import { createActivityStateSync } from "./core/progress/activity-state-sync.js";
+import { resetActivityStateDedupe } from "./core/progress/activity-state.js";
 import { createLearnerContext } from "./core/learner/learner-context.js";
 import { createOnboardingService } from "./core/onboarding/onboarding-service.js";
 import { createSubmissionService } from "./core/submission/submission-service.js";
@@ -101,6 +103,7 @@ export function createPlatform(options = {}, dependencies = {}) {
 
   const root = (dependencies.document || globalThis.document)?.documentElement;
   applyBranding(root, config.theme);
+  const activityStateSync = createActivityStateSync({ client, auth });
   const unsubscribers = [];
   let hubEnrolmentContextSynced = false;
 
@@ -109,7 +112,11 @@ export function createPlatform(options = {}, dependencies = {}) {
     if (authState.status === "signed-out") {
       hubEnrolmentContextSynced = false;
       onboarding.clearPending();
+      void activityStateSync.reset();
       state.transition("signed-out");
+    }
+    if (authState.status === "authenticated") {
+      void activityStateSync.start();
     }
     if (authState.status === "error") state.transition("error", authState.error);
   }));
@@ -272,6 +279,8 @@ export function createPlatform(options = {}, dependencies = {}) {
     unsubscribers.forEach((unsubscribe) => unsubscribe());
     runtimeWindow?.removeEventListener?.("offline", offline);
     runtimeWindow?.removeEventListener?.("online", online);
+    void activityStateSync.stop();
+    resetActivityStateDedupe();
     theme?.destroy();
   }
 
