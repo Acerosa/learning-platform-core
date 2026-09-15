@@ -1,4 +1,10 @@
-import { createActivityStateStore } from "./activity-state.js";
+import {
+  getActivityStateLearnerBlock,
+  getOrCreateActivityStateStore,
+  learnerCacheKey,
+  LEARNER_IDENTITY_MESSAGE,
+  subscribeActivityStateIdentityRecovery
+} from "./activity-state.js";
 import { canonicalActivityVersion } from "../security/hub-security-baseline.js";
 
 function firstRow(result) {
@@ -28,7 +34,10 @@ export function createProgressService(api, options = {}) {
       activityKey,
       activityVersion: canonicalActivityVersion(activityVersion)
     }),
-    createStore: (storeOptions = {}) => createActivityStateStore({
+    getLearnerIdentityBlock: () => getActivityStateLearnerBlock(learnerCacheKey(options.auth)),
+    subscribeLearnerIdentityRecovery: subscribeActivityStateIdentityRecovery,
+    learnerIdentityMessage: LEARNER_IDENTITY_MESSAGE,
+    createStore: (storeOptions = {}) => getOrCreateActivityStateStore({
       api,
       auth: options.auth,
       storage: storeOptions.storage ?? options.storage,
