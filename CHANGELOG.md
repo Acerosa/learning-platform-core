@@ -2,6 +2,18 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## 0.2.23 - 2026-09-15
+
+### Fixed
+
+- Permanent activity-state identity failures (`STUDENT_IDENTITY_NOT_FOUND`,
+  401/403) circuit-break for the signed-in learner: one shared
+  `ensure_learner_auth_link` recovery attempt, then no further
+  `get_activity_state` retries for that session. Transient 5xx/network
+  faults use bounded exponential backoff (max 4 attempts).
+- Learner hubs can read `progress.getLearnerIdentityBlock()` /
+  `progress.learnerIdentityMessage` for a safe learner-facing notice.
+
 ## 0.2.22 - 2026-09-12
 
 ### Fixed

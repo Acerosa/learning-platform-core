@@ -107,7 +107,7 @@ test("E. concurrent hydrates of the same activity share one request", async () =
   assert.equal(max, 1);
 });
 
-test("F. a failed read is not cached and can be retried", async () => {
+test("F. a transient failed read is not permanently cached and can be retried", async () => {
   const api = countingApi({ failNextRead: true });
   const store = storeFor(api, { storage: memoryStorage() });
   store.save({ responses: { Q1: "kept" } }, { remote: false });

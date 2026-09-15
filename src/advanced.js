@@ -23,8 +23,16 @@ export { createProgressService } from "./core/progress/progress-service.js";
 export {
   createActivityStateStore,
   sanitizeActivityState,
-  reconcileActivityState
+  reconcileActivityState,
+  resetActivityStateDedupe,
+  classifyActivityStateError,
+  isLearnerIdentityError,
+  LEARNER_IDENTITY_MESSAGE,
+  getActivityStateLearnerBlock,
+  isActivityStateLearnerBlocked,
+  recoverLearnerIdentityOnce
 } from "./core/progress/activity-state.js";
+export { createActivityStateSync } from "./core/progress/activity-state-sync.js";
 export { createSubmissionService, assertSecureSubmission } from "./core/submission/submission-service.js";
 export { createFormativeMarkingService } from "./core/marking/formative-marking-service.js";
 export { toApiResponse } from "./core/evidence/evidence.js";

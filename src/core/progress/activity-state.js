@@ -1,5 +1,31 @@
 import { PlatformError } from "../errors/platform-error.js";
 import { canonicalActivityVersion } from "../security/hub-security-baseline.js";
+import {
+  ACTIVITY_STATE_TRANSIENT_MAX_ATTEMPTS,
+  classifyActivityStateError,
+  isLearnerIdentityError,
+  LEARNER_IDENTITY_MESSAGE,
+  sleep,
+  transientBackoffMs
+} from "./activity-state-errors.js";
+import {
+  recoverLearnerIdentityOnce,
+  resetActivityStateIdentityRecovery,
+  getActivityStateIdentityRecoveryState,
+  subscribeActivityStateIdentityRecovery
+} from "./activity-state-identity.js";
+
+export {
+  classifyActivityStateError,
+  isLearnerIdentityError,
+  LEARNER_IDENTITY_MESSAGE,
+  ACTIVITY_STATE_TRANSIENT_MAX_ATTEMPTS
+} from "./activity-state-errors.js";
+export {
+  recoverLearnerIdentityOnce,
+  getActivityStateIdentityRecoveryState,
+  subscribeActivityStateIdentityRecovery
+} from "./activity-state-identity.js";
 
 export const ACTIVITY_STATE_CACHE_PREFIX = "learning-platform.activity-state.v1";
 
@@ -96,6 +122,7 @@ export const ACTIVITY_STATE_INVALIDATION_COALESCE_MS = 50;
 
 const inflightReads = new Map();
 const completedReads = new Set();
+const permanentLearnerBlocks = new Map();
 const writeFingerprints = new Map();
 const storeRegistry = new Map();
 let activeLearnerKey = null;
@@ -137,20 +164,54 @@ function clearStoreRegistry() {
 export function resetActivityStateDedupe() {
   inflightReads.clear();
   completedReads.clear();
+  permanentLearnerBlocks.clear();
   writeFingerprints.clear();
   activeLearnerKey = null;
+  resetActivityStateIdentityRecovery();
   clearStoreRegistry();
+}
+
+export function isActivityStateLearnerBlocked(learnerKey) {
+  return permanentLearnerBlocks.has(String(learnerKey || ""));
+}
+
+export function getActivityStateLearnerBlock(learnerKey) {
+  const block = permanentLearnerBlocks.get(String(learnerKey || ""));
+  return block ? { ...block } : null;
+}
+
+function blockLearnerReads(learnerKey, error) {
+  const key = String(learnerKey || "");
+  if (!key || permanentLearnerBlocks.has(key)) return permanentLearnerBlocks.get(key);
+  const block = Object.freeze({
+    code: String(error?.code || "STUDENT_IDENTITY_NOT_FOUND"),
+    learnerMessage: LEARNER_IDENTITY_MESSAGE,
+    at: Date.now()
+  });
+  permanentLearnerBlocks.set(key, block);
+  return block;
 }
 
 function syncLearnerDedupeScope(auth) {
   const current = learnerCacheKey(auth);
   if (activeLearnerKey && activeLearnerKey !== current) {
-    inflightReads.clear();
-    completedReads.clear();
-    writeFingerprints.clear();
+    // Drop in-flight/completed keys for the previous learner only. Permanent
+    // identity blocks stay until resetActivityStateDedupe() so a broken
+    // identity cannot regain an unbounded retry storm after another auth
+    // briefly becomes active in the same JS realm (tests / fast account switch).
+    const previous = `${activeLearnerKey}|`;
+    [...inflightReads.keys()].forEach((key) => {
+      if (String(key).startsWith(previous)) inflightReads.delete(key);
+    });
+    [...completedReads].forEach((key) => {
+      if (String(key).startsWith(previous)) completedReads.delete(key);
+    });
+    [...writeFingerprints.keys()].forEach((key) => {
+      if (String(key).startsWith(previous)) writeFingerprints.delete(key);
+    });
     const prefix = `${current}|`;
     [...storeRegistry.entries()].forEach(([key, store]) => {
-      if (!key.startsWith(prefix)) {
+      if (!key.startsWith(prefix) && !key.startsWith(previous)) {
         try { store.destroy(); } catch {}
         storeRegistry.delete(key);
       }
@@ -405,6 +466,7 @@ export function createActivityStateStore({
 
   async function applyRemoteInvalidation(event, applyOptions = {}) {
     if (destroyed || isDirty()) return null;
+    if (isActivityStateLearnerBlocked(learnerCacheKey(auth))) return null;
     if (!applyOptions.force && eventIsCurrentOrOlder(event) && pendingRemoteRevision <= knownRevision) {
       pendingRemoteRevision = 0;
       return null;
@@ -512,10 +574,55 @@ export function createActivityStateStore({
     return stamped;
   }
 
+  async function readServerState() {
+    return asRecord(firstRow(await api.getActivityState({
+      activityKey: key,
+      activityVersion: version
+    })));
+  }
+
+  async function readServerStateWithPolicy() {
+    const learnerKey = learnerCacheKey(auth);
+    let attempt = 0;
+    let identityRetried = false;
+    for (;;) {
+      try {
+        return await readServerState();
+      } catch (error) {
+        const kind = classifyActivityStateError(error);
+        if (kind === "permanent" || isLearnerIdentityError(error)) {
+          if (!identityRetried && isLearnerIdentityError(error)) {
+            identityRetried = true;
+            const recovery = await recoverLearnerIdentityOnce({ api, learnerKey });
+            if (recovery.recovered) {
+              continue;
+            }
+          }
+          blockLearnerReads(learnerKey, error);
+          const blocked = new PlatformError({
+            code: String(error?.code || "STUDENT_IDENTITY_NOT_FOUND"),
+            category: "authentication",
+            learnerMessage: LEARNER_IDENTITY_MESSAGE,
+            cause: error
+          });
+          throw blocked;
+        }
+        attempt += 1;
+        if (attempt >= ACTIVITY_STATE_TRANSIENT_MAX_ATTEMPTS) throw error;
+        await sleep(transientBackoffMs(attempt - 1), setTimeoutFn);
+      }
+    }
+  }
+
   async function hydrate(preferredLocal, options = {}) {
     const local = readLocal(preferredLocal);
     syncLearnerDedupeScope(auth);
     if (!signedIn(auth) || typeof api?.getActivityState !== "function") {
+      if (local) writeLocal(local);
+      return local;
+    }
+    const learnerKey = learnerCacheKey(auth);
+    if (isActivityStateLearnerBlocked(learnerKey)) {
       if (local) writeLocal(local);
       return local;
     }
@@ -530,9 +637,20 @@ export function createActivityStateStore({
       try {
         await inflightReads.get(dedupeKey);
       } catch {
-        /* first request failed; retry below unless it completed */
+        /* settled below */
+      }
+      if (isActivityStateLearnerBlocked(learnerKey)) {
+        return readLocal(preferredLocal);
       }
       if (!fresh && completedReads.has(dedupeKey)) {
+        return readLocal(preferredLocal);
+      }
+      // Permanent failures must not spawn a follow-up RPC. Transient failures
+      // that never completed may retry once the inflight slot is free.
+      if (inflightReads.has(dedupeKey)) {
+        try {
+          await inflightReads.get(dedupeKey);
+        } catch {}
         return readLocal(preferredLocal);
       }
     }
@@ -540,10 +658,7 @@ export function createActivityStateStore({
     const pending = (async () => {
       let server = null;
       try {
-        server = asRecord(firstRow(await api.getActivityState({
-          activityKey: key,
-          activityVersion: version
-        })));
+        server = await readServerStateWithPolicy();
       } catch (error) {
         throw error;
       }

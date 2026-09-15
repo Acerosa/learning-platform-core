@@ -1,6 +1,7 @@
 import {
   ACTIVITY_STATE_INVALIDATION_EVENT,
   activityStateSyncTopic,
+  getActivityStateLearnerBlock,
   getRegisteredActivityStateStore,
   listRegisteredActivityStateStores,
   learnerCacheKey,
@@ -47,6 +48,8 @@ export function createActivityStateSync({
     if (reconcileInFlight) return;
     reconcileInFlight = true;
     try {
+      const key = learnerKey();
+      if (typeof getActivityStateLearnerBlock === "function" && getActivityStateLearnerBlock(key)) return;
       const stores = listStores();
       await Promise.all(stores.map((store) => {
         if (!store || typeof store.handleRemoteInvalidation !== "function") return null;
