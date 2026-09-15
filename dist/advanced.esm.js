@@ -178,38 +178,38 @@ function safeBrandColour(value, fallback) {
   }
   return colour;
 }
-function createPlatformConfig(options2 = {}) {
-  const hubCode = cleanString(options2.hubCode);
-  const hubName = cleanString(options2.hubName);
+function createPlatformConfig(options = {}) {
+  const hubCode = cleanString(options.hubCode);
+  const hubName = cleanString(options.hubName);
   if (!HUB_CODE_PATTERN.test(hubCode)) {
     throw new PlatformError({ code: "INVALID_HUB_CODE", category: "configuration" });
   }
   if (!hubName) {
     throw new PlatformError({ code: "INVALID_HUB_NAME", category: "configuration" });
   }
-  if (options2.apiSchema && options2.apiSchema !== "api") {
+  if (options.apiSchema && options.apiSchema !== "api") {
     throw new PlatformError({ code: "PRIVATE_SCHEMA_PROHIBITED", category: "configuration" });
   }
-  const navigationMode = navigationModeFrom(options2.navigationMode);
+  const navigationMode = navigationModeFrom(options.navigationMode);
   return Object.freeze({
     hubCode,
     hubName,
-    platformVersion: cleanString(options2.platformVersion) || "0.1",
+    platformVersion: cleanString(options.platformVersion) || "0.1",
     apiSchema: "api",
-    accountPath: cleanString(options2.accountPath) || "./account/",
+    accountPath: cleanString(options.accountPath) || "./account/",
     /** Relative path from the current page to the hub root (e.g. "./", "../"). Used for auth email redirects. */
-    hubRootPath: cleanString(options2.hubRootPath) || "./",
+    hubRootPath: cleanString(options.hubRootPath) || "./",
     navigationMode,
-    navigation: navigationFrom(options2.navigation, navigationMode),
-    features: Object.freeze({ ...options2.features || {} }),
+    navigation: navigationFrom(options.navigation, navigationMode),
+    features: Object.freeze({ ...options.features || {} }),
     theme: Object.freeze({
-      primary: safeBrandColour(options2.theme?.primary, "#315b7d"),
-      accent: safeBrandColour(options2.theme?.accent, "#4f7695")
+      primary: safeBrandColour(options.theme?.primary, "#315b7d"),
+      accent: safeBrandColour(options.theme?.accent, "#4f7695")
     }),
-    courseKey: cleanString(options2.courseKey),
+    courseKey: cleanString(options.courseKey),
     supabase: Object.freeze({
-      projectUrl: cleanString(options2.supabase?.projectUrl),
-      publishableKey: cleanString(options2.supabase?.publishableKey)
+      projectUrl: cleanString(options.supabase?.projectUrl),
+      publishableKey: cleanString(options.supabase?.publishableKey)
     })
   });
 }
@@ -473,18 +473,18 @@ function createAuthService({ client, logger, resolveRedirectUrl, cleanAuthCallba
   let initialisePromise = null;
   let restoreComplete = false;
   let staleRecoveryAttempted = false;
-  const listeners = /* @__PURE__ */ new Set();
+  const listeners2 = /* @__PURE__ */ new Set();
   function publish(next) {
     state = Object.freeze({ ...state, ...next });
-    listeners.forEach((listener) => listener(state));
+    listeners2.forEach((listener) => listener(state));
     return state;
   }
   function subscribe(listener) {
     if (typeof listener !== "function") return () => {
     };
-    listeners.add(listener);
+    listeners2.add(listener);
     listener(state);
-    return () => listeners.delete(listener);
+    return () => listeners2.delete(listener);
   }
   function cleanCallbackUrl() {
     try {
@@ -765,23 +765,23 @@ function normaliseEnrolments(rows) {
 function createLearnerContext({ authService, profileService, enrolmentService } = {}) {
   let state = Object.freeze({ status: "loading", context: null, error: null });
   let refreshPromise = null;
-  const listeners = /* @__PURE__ */ new Set();
+  const listeners2 = /* @__PURE__ */ new Set();
   function publish(next) {
     state = Object.freeze({ ...state, ...next });
-    listeners.forEach((listener) => listener(state));
+    listeners2.forEach((listener) => listener(state));
     return state;
   }
   function subscribe(listener) {
     if (typeof listener !== "function") return () => {
     };
-    listeners.add(listener);
+    listeners2.add(listener);
     listener(state);
-    return () => listeners.delete(listener);
+    return () => listeners2.delete(listener);
   }
-  async function refresh(options2 = {}) {
+  async function refresh(options = {}) {
     if (!authService.isSignedIn()) return publish({ status: "signed-out", context: null, error: null });
     if (refreshPromise) return refreshPromise;
-    const preferredGroupCode = clean(options2.preferredGroupCode);
+    const preferredGroupCode = clean(options.preferredGroupCode);
     publish({ status: "loading", error: null });
     refreshPromise = Promise.all([profileService.getProfile(), enrolmentService.getEnrolments()]).then(([rawProfile, rawEnrolments]) => {
       const profile = normaliseProfile(rawProfile);
@@ -1119,6 +1119,135 @@ function resolveActivityVersion(activity) {
   return canonical;
 }
 
+// src/core/progress/activity-state-errors.js
+var ACTIVITY_STATE_TRANSIENT_MAX_ATTEMPTS = 4;
+var ACTIVITY_STATE_TRANSIENT_BACKOFF_MS = Object.freeze([500, 1e3, 2e3, 4e3]);
+var LEARNER_IDENTITY_ERROR_CODES = Object.freeze([
+  "STUDENT_IDENTITY_NOT_FOUND",
+  "AUTHENTICATION_REQUIRED",
+  "AUTH_REQUIRED",
+  "PROFILE_REQUIRED"
+]);
+var IDENTITY_CODE = /STUDENT_IDENTITY_NOT_FOUND|AUTHENTICATION_REQUIRED|AUTH_REQUIRED|PROFILE_REQUIRED/i;
+var TRANSIENT_HINT = /NETWORK|FETCH|TIMEOUT|ABORT|OFFLINE|ECONNRESET|ETIMEDOUT|429|502|503|504|500/i;
+var LEARNER_IDENTITY_MESSAGE = "We couldn\u2019t connect your learner account. Your sign-in was successful, but your learner profile could not be loaded. Try refreshing the page once. If the problem continues, ask your tutor for help.";
+function errorText(error) {
+  return [
+    error?.code,
+    error?.message,
+    error?.learnerMessage,
+    error?.details,
+    error?.hint,
+    error?.diagnostic?.sourceCode
+  ].map((part) => String(part || "").trim()).filter(Boolean).join(" ");
+}
+function activityStateErrorCode(error) {
+  const candidates = [
+    error?.code,
+    error?.diagnostic?.sourceCode,
+    error?.message
+  ];
+  for (const candidate of candidates) {
+    const value = String(candidate || "").trim();
+    if (/^[A-Z][A-Z0-9_]+$/.test(value)) return value;
+    const match = value.match(/\b(STUDENT_IDENTITY_NOT_FOUND|AUTHENTICATION_REQUIRED|AUTH_REQUIRED|PROFILE_REQUIRED)\b/);
+    if (match) return match[1];
+  }
+  return "";
+}
+function isLearnerIdentityError(error) {
+  const code = activityStateErrorCode(error);
+  if (LEARNER_IDENTITY_ERROR_CODES.includes(code)) return true;
+  return IDENTITY_CODE.test(errorText(error));
+}
+function classifyActivityStateError(error) {
+  if (!error) return "unknown";
+  const status = Number(error?.status ?? error?.diagnostic?.status);
+  if (status === 401 || status === 403) return "permanent";
+  if (isLearnerIdentityError(error)) return "permanent";
+  if (status === 429 || status >= 500 && status <= 599 || status === 0) return "transient";
+  if (TRANSIENT_HINT.test(errorText(error))) return "transient";
+  return "transient";
+}
+function transientBackoffMs(attemptIndex, schedule = ACTIVITY_STATE_TRANSIENT_BACKOFF_MS) {
+  const index = Math.max(0, Math.min(Number(attemptIndex) || 0, schedule.length - 1));
+  const base = schedule[index] || schedule[schedule.length - 1] || 500;
+  const jitter = Math.floor(Math.random() * Math.max(50, Math.floor(base * 0.2)));
+  return base + jitter;
+}
+function sleep(ms, setTimeoutFn = globalThis.setTimeout.bind(globalThis)) {
+  return new Promise((resolve) => setTimeoutFn(resolve, Math.max(0, Number(ms) || 0)));
+}
+
+// src/core/progress/activity-state-identity.js
+var recoveryByLearner = /* @__PURE__ */ new Map();
+var listeners = /* @__PURE__ */ new Set();
+function firstRow(result) {
+  if (Array.isArray(result)) return result[0] || null;
+  return result || null;
+}
+function resetActivityStateIdentityRecovery() {
+  recoveryByLearner.clear();
+}
+function subscribeActivityStateIdentityRecovery(listener) {
+  if (typeof listener !== "function") return () => {
+  };
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+function emit(state) {
+  listeners.forEach((listener) => {
+    try {
+      listener(state);
+    } catch {
+    }
+  });
+}
+async function recoverLearnerIdentityOnce({ api, learnerKey } = {}) {
+  const key = String(learnerKey || "authenticated");
+  const existing = recoveryByLearner.get(key);
+  if (existing?.state) {
+    return {
+      recovered: existing.state.status === "recovered",
+      attempted: false,
+      status: existing.state.status
+    };
+  }
+  if (existing?.promise) return existing.promise;
+  const entry = { promise: null, state: null };
+  entry.promise = (async () => {
+    if (typeof api?.ensureLearnerAuthLink !== "function") {
+      entry.state = { learnerKey: key, status: "failed" };
+      emit(entry.state);
+      return { recovered: false, attempted: true, status: "failed" };
+    }
+    try {
+      const row = firstRow(await api.ensureLearnerAuthLink());
+      const linked = Boolean(row?.linked);
+      if (linked) {
+        entry.state = { learnerKey: key, status: "recovered" };
+        emit(entry.state);
+        return { recovered: true, attempted: true, status: "recovered" };
+      }
+      entry.state = { learnerKey: key, status: "failed" };
+      emit(entry.state);
+      return { recovered: false, attempted: true, status: "failed" };
+    } catch (error) {
+      entry.state = {
+        learnerKey: key,
+        status: "failed",
+        code: isLearnerIdentityError(error) ? "STUDENT_IDENTITY_NOT_FOUND" : String(error?.code || "RECOVERY_FAILED")
+      };
+      emit(entry.state);
+      return { recovered: false, attempted: true, status: "failed", error };
+    } finally {
+      entry.promise = null;
+    }
+  })();
+  recoveryByLearner.set(key, entry);
+  return entry.promise;
+}
+
 // src/core/progress/activity-state.js
 var ACTIVITY_STATE_CACHE_PREFIX = "learning-platform.activity-state.v1";
 var FORBIDDEN_KEY = /^(score|max_score|maxscore|awarded_score|awardedscore|is_correct|iscorrect|marking_source|markingsource|total_score|totalscore|percentage|correctvalues|correct_values|correctoptionid|correct_option_id|correctcategoryid|correct_category_id|correctmapping|correct_mapping|answerkey|answer_key|learnerid|learner_id|studentid|student_id|studentnumber|student_number|enrolmentid|enrolment_id|assignmentid|assignment_id|attemptnumber|attempt_number|groupid|group_id|firstname|first_name|surname|email)$/i;
@@ -1191,6 +1320,149 @@ function activityStateCacheKey(activityKey, activityVersion, learnerKey) {
     encodeURIComponent(activityVersion)
   ].join(":");
 }
+var TRANSIENT_PERSIST_KEYS = /* @__PURE__ */ new Set([
+  "updatedAt",
+  "startedAt",
+  "completedAt",
+  "pendingSave",
+  "cachedAt",
+  "clientUpdatedAt"
+]);
+var ACTIVITY_STATE_INVALIDATION_EVENT = "activity_state_invalidated";
+var ACTIVITY_STATE_INVALIDATION_COALESCE_MS = 50;
+var inflightReads = /* @__PURE__ */ new Map();
+var completedReads = /* @__PURE__ */ new Set();
+var permanentLearnerBlocks = /* @__PURE__ */ new Map();
+var writeFingerprints = /* @__PURE__ */ new Map();
+var storeRegistry = /* @__PURE__ */ new Map();
+var activeLearnerKey = null;
+function activityStateSyncTopic(userId) {
+  return `learner-state:${String(userId || "")}`;
+}
+function activityStateReadKey(learnerKey, activityKey, activityVersion) {
+  return [
+    String(learnerKey || "guest"),
+    String(activityKey || ""),
+    String(activityVersion || "")
+  ].join("|");
+}
+function canonicalPersistable(value) {
+  if (Array.isArray(value)) return value.map((item2) => canonicalPersistable(item2));
+  if (!value || typeof value !== "object") return value;
+  const next = {};
+  Object.keys(value).sort().forEach((key) => {
+    if (TRANSIENT_PERSIST_KEYS.has(key)) return;
+    next[key] = canonicalPersistable(value[key]);
+  });
+  return next;
+}
+function persistableActivityStateFingerprint(state) {
+  return JSON.stringify(canonicalPersistable(sanitizeActivityState(state || {})));
+}
+function clearStoreRegistry() {
+  [...storeRegistry.values()].forEach((store) => {
+    try {
+      store.destroy();
+    } catch {
+    }
+  });
+  storeRegistry.clear();
+}
+function resetActivityStateDedupe() {
+  inflightReads.clear();
+  completedReads.clear();
+  permanentLearnerBlocks.clear();
+  writeFingerprints.clear();
+  activeLearnerKey = null;
+  resetActivityStateIdentityRecovery();
+  clearStoreRegistry();
+}
+function isActivityStateLearnerBlocked(learnerKey) {
+  return permanentLearnerBlocks.has(String(learnerKey || ""));
+}
+function getActivityStateLearnerBlock(learnerKey) {
+  const block = permanentLearnerBlocks.get(String(learnerKey || ""));
+  return block ? { ...block } : null;
+}
+function blockLearnerReads(learnerKey, error) {
+  const key = String(learnerKey || "");
+  if (!key || permanentLearnerBlocks.has(key)) return permanentLearnerBlocks.get(key);
+  const block = Object.freeze({
+    code: String(error?.code || "STUDENT_IDENTITY_NOT_FOUND"),
+    learnerMessage: LEARNER_IDENTITY_MESSAGE,
+    at: Date.now()
+  });
+  permanentLearnerBlocks.set(key, block);
+  return block;
+}
+function syncLearnerDedupeScope(auth) {
+  const current = learnerCacheKey(auth);
+  if (activeLearnerKey && activeLearnerKey !== current) {
+    const previous = `${activeLearnerKey}|`;
+    [...inflightReads.keys()].forEach((key) => {
+      if (String(key).startsWith(previous)) inflightReads.delete(key);
+    });
+    [...completedReads].forEach((key) => {
+      if (String(key).startsWith(previous)) completedReads.delete(key);
+    });
+    [...writeFingerprints.keys()].forEach((key) => {
+      if (String(key).startsWith(previous)) writeFingerprints.delete(key);
+    });
+    const prefix = `${current}|`;
+    [...storeRegistry.entries()].forEach(([key, store]) => {
+      if (!key.startsWith(prefix) && !key.startsWith(previous)) {
+        try {
+          store.destroy();
+        } catch {
+        }
+        storeRegistry.delete(key);
+      }
+    });
+  }
+  activeLearnerKey = current;
+}
+function getOrCreateActivityStateStore(options = {}) {
+  const activityKey = typeof options.activityKey === "string" ? options.activityKey.trim() : "";
+  const activityVersion = canonicalActivityVersion(options.activityVersion);
+  const key = activityStateReadKey(learnerCacheKey(options.auth), activityKey, activityVersion);
+  const existing = storeRegistry.get(key);
+  if (existing) return existing;
+  const store = createActivityStateStore(options);
+  storeRegistry.set(key, store);
+  return store;
+}
+function getRegisteredActivityStateStore(learnerKey, activityKey, activityVersion) {
+  const canonical = canonicalActivityVersion(activityVersion);
+  return storeRegistry.get(activityStateReadKey(learnerKey, activityKey, canonical)) || (activityVersion && String(activityVersion) !== canonical ? storeRegistry.get(activityStateReadKey(learnerKey, activityKey, String(activityVersion))) : null) || null;
+}
+function listRegisteredActivityStateStores() {
+  return [...storeRegistry.values()];
+}
+function invalidateActivityStateReads(filter = {}) {
+  const learnerKey = filter.learnerKey;
+  const activityKey = filter.activityKey;
+  const activityVersion = filter.activityVersion;
+  if (!learnerKey && !activityKey && !activityVersion) {
+    resetActivityStateDedupe();
+    return;
+  }
+  const matches = (key) => {
+    const [learner, activity, version] = String(key).split("|");
+    if (learnerKey && learner !== String(learnerKey)) return false;
+    if (activityKey && activity !== String(activityKey)) return false;
+    if (activityVersion && version !== String(activityVersion)) return false;
+    return true;
+  };
+  [...completedReads].forEach((key) => {
+    if (matches(key)) completedReads.delete(key);
+  });
+  [...inflightReads.keys()].forEach((key) => {
+    if (matches(key)) inflightReads.delete(key);
+  });
+  [...writeFingerprints.keys()].forEach((key) => {
+    if (matches(key)) writeFingerprints.delete(key);
+  });
+}
 function readJson(storage, key) {
   if (!storage || !key) return null;
   try {
@@ -1237,10 +1509,11 @@ function asRecord(row) {
     state: row.state || row.state_payload || {},
     startedAt: row.started_at || row.startedAt || null,
     updatedAt: row.updated_at || row.updatedAt || null,
-    completedAt: row.completed_at || row.completedAt || null
+    completedAt: row.completed_at || row.completedAt || null,
+    revision: Number(row.revision) || 0
   };
 }
-function firstRow(result) {
+function firstRow2(result) {
   if (Array.isArray(result)) return result[0] || null;
   return result || null;
 }
@@ -1260,11 +1533,22 @@ function createActivityStateStore({
   const version = canonicalActivityVersion(activityVersion);
   if (!key) throw new PlatformError({ code: "ACTIVITY_KEY_REQUIRED", category: "validation" });
   if (!version) throw new PlatformError({ code: "ACTIVITY_VERSION_REQUIRED", category: "validation" });
+  const registryKey = activityStateReadKey(learnerCacheKey(auth), key, version);
   let pendingTimer = null;
   let pendingState = null;
   let destroyed = false;
+  let dirty = false;
+  let knownRevision = 0;
+  let knownUpdatedAt = 0;
+  let pendingRemoteRevision = 0;
+  let coalesceTimer = null;
+  let coalesceResolvers = [];
+  const listeners2 = /* @__PURE__ */ new Set();
   function cacheKey() {
     return activityStateCacheKey(key, version, learnerCacheKey(auth));
+  }
+  function readDedupeKey() {
+    return activityStateReadKey(learnerCacheKey(auth), key, version);
   }
   function readLocal(preferred) {
     const candidates = [];
@@ -1287,21 +1571,128 @@ function createActivityStateStore({
   function writeLocal(state) {
     return writeJson(storage, cacheKey(), state);
   }
+  function rememberPersisted(record) {
+    if (!record) return;
+    const revision = Number(record.revision) || 0;
+    if (revision > knownRevision) knownRevision = revision;
+    const updated = parseTime(record.updatedAt);
+    if (updated > knownUpdatedAt) knownUpdatedAt = updated;
+    if (record.state) {
+      writeFingerprints.set(readDedupeKey(), persistableActivityStateFingerprint(record.state));
+    }
+  }
+  function isDirty() {
+    return dirty || pendingState != null || pendingTimer != null;
+  }
+  function markDirty() {
+    if (destroyed) return;
+    dirty = true;
+  }
+  function eventIsCurrentOrOlder(event = {}) {
+    const revision = Number(event.revision) || 0;
+    if (revision && knownRevision && revision <= knownRevision) return true;
+    const updated = parseTime(event.updatedAt);
+    if (!revision && updated && knownUpdatedAt && updated <= knownUpdatedAt) return true;
+    return false;
+  }
+  function subscribe(listener) {
+    if (typeof listener !== "function") return () => {
+    };
+    listeners2.add(listener);
+    return () => listeners2.delete(listener);
+  }
+  function notifyRemote(state) {
+    listeners2.forEach((listener) => {
+      try {
+        listener(state);
+      } catch {
+      }
+    });
+  }
+  function maybeApplyDeferredRemote() {
+    const pending = pendingRemoteRevision;
+    if (!pending || isDirty()) return;
+    if (pending <= knownRevision) {
+      pendingRemoteRevision = 0;
+      return;
+    }
+    pendingRemoteRevision = 0;
+    handleRemoteInvalidation({ revision: pending });
+  }
+  function handleRemoteInvalidation(event = {}, options = {}) {
+    if (destroyed) return Promise.resolve(null);
+    const force = Boolean(options.force || event.force);
+    if (!force && eventIsCurrentOrOlder(event)) return Promise.resolve(null);
+    const revision = Number(event.revision) || 0;
+    if (revision > pendingRemoteRevision) pendingRemoteRevision = revision;
+    if (isDirty()) return Promise.resolve(null);
+    const wait = Number.isFinite(options.coalesceMs) ? options.coalesceMs : ACTIVITY_STATE_INVALIDATION_COALESCE_MS;
+    return new Promise((resolve) => {
+      coalesceResolvers.push(resolve);
+      if (coalesceTimer != null) clearTimeoutFn(coalesceTimer);
+      coalesceTimer = setTimeoutFn(() => {
+        coalesceTimer = null;
+        const resolvers = coalesceResolvers;
+        coalesceResolvers = [];
+        void applyRemoteInvalidation(event, { force }).then((result) => {
+          resolvers.forEach((fn) => fn(result));
+        }, () => {
+          resolvers.forEach((fn) => fn(null));
+        });
+      }, wait);
+    });
+  }
+  async function applyRemoteInvalidation(event, applyOptions = {}) {
+    if (destroyed || isDirty()) return null;
+    if (isActivityStateLearnerBlocked(learnerCacheKey(auth))) return null;
+    if (!applyOptions.force && eventIsCurrentOrOlder(event) && pendingRemoteRevision <= knownRevision) {
+      pendingRemoteRevision = 0;
+      return null;
+    }
+    invalidateActivityStateReads({
+      learnerKey: learnerCacheKey(auth),
+      activityKey: key,
+      activityVersion: version
+    });
+    const applied = await hydrate2(null, { fresh: true, remote: true });
+    pendingRemoteRevision = 0;
+    return applied;
+  }
   async function pushServer(state) {
     if (!signedIn(auth) || typeof api?.saveActivityState !== "function") return null;
+    syncLearnerDedupeScope(auth);
     const sanitized = sanitizeActivityState(state || {});
     const updatedAt = state?.updatedAt || (/* @__PURE__ */ new Date()).toISOString();
+    const dedupeKey = readDedupeKey();
+    const fingerprint = persistableActivityStateFingerprint(sanitized);
+    if (writeFingerprints.get(dedupeKey) === fingerprint) {
+      return {
+        activityKey: key,
+        activityVersion: version,
+        status: "in_progress",
+        state: sanitized,
+        startedAt: state?.startedAt || null,
+        updatedAt,
+        completedAt: state?.completedAt || null
+      };
+    }
     try {
-      const saved = asRecord(firstRow(await api.saveActivityState({
+      const saved = asRecord(firstRow2(await api.saveActivityState({
         activityKey: key,
         activityVersion: version,
         state: sanitized,
         clientUpdatedAt: updatedAt,
         hubCode
       })));
+      writeFingerprints.set(dedupeKey, fingerprint);
+      rememberPersisted(saved);
+      dirty = false;
       if (saved?.state) writeLocal({ ...saved.state, updatedAt: saved.updatedAt, startedAt: saved.startedAt });
+      maybeApplyDeferredRemote();
       return saved;
     } catch (error) {
+      writeFingerprints.delete(dedupeKey);
+      dirty = true;
       writeLocal({ ...state, updatedAt, pendingSave: true });
       throw error;
     }
@@ -1323,18 +1714,29 @@ function createActivityStateStore({
     pendingState = null;
     return pushServer(next).catch(() => next);
   }
-  function save(state, options2 = {}) {
+  function save(state, options = {}) {
+    syncLearnerDedupeScope(auth);
+    const sanitized = sanitizeActivityState(state || {});
+    const fingerprint = persistableActivityStateFingerprint(sanitized);
     const stamped = {
-      ...sanitizeActivityState(state || {}),
+      ...sanitized,
       updatedAt: (/* @__PURE__ */ new Date()).toISOString()
     };
     writeLocal(stamped);
-    if (!signedIn(auth) || options2.remote === false) {
-      if (options2.remote === false) cancelPending();
+    const unchanged = writeFingerprints.get(readDedupeKey()) === fingerprint;
+    if (!unchanged) dirty = true;
+    if (!signedIn(auth) || options.remote === false) {
+      if (options.remote === false) cancelPending();
+      return stamped;
+    }
+    if (unchanged) {
+      cancelPending();
+      dirty = false;
+      maybeApplyDeferredRemote();
       return stamped;
     }
     pendingState = stamped;
-    if (options2.immediate) {
+    if (options.immediate) {
       flush();
       return stamped;
     }
@@ -1342,49 +1744,138 @@ function createActivityStateStore({
     pendingTimer = setTimeoutFn(() => {
       pendingTimer = null;
       flush();
-    }, Number.isFinite(options2.debounceMs) ? options2.debounceMs : debounceMs);
+    }, Number.isFinite(options.debounceMs) ? options.debounceMs : debounceMs);
     return stamped;
   }
-  async function hydrate2(preferredLocal) {
+  async function readServerState() {
+    return asRecord(firstRow2(await api.getActivityState({
+      activityKey: key,
+      activityVersion: version
+    })));
+  }
+  async function readServerStateWithPolicy() {
+    const learnerKey = learnerCacheKey(auth);
+    let attempt = 0;
+    let identityRetried = false;
+    for (; ; ) {
+      try {
+        return await readServerState();
+      } catch (error) {
+        const kind = classifyActivityStateError(error);
+        if (kind === "permanent" || isLearnerIdentityError(error)) {
+          if (!identityRetried && isLearnerIdentityError(error)) {
+            identityRetried = true;
+            const recovery = await recoverLearnerIdentityOnce({ api, learnerKey });
+            if (recovery.recovered) {
+              continue;
+            }
+          }
+          blockLearnerReads(learnerKey, error);
+          const blocked = new PlatformError({
+            code: String(error?.code || "STUDENT_IDENTITY_NOT_FOUND"),
+            category: "authentication",
+            learnerMessage: LEARNER_IDENTITY_MESSAGE,
+            cause: error
+          });
+          throw blocked;
+        }
+        attempt += 1;
+        if (attempt >= ACTIVITY_STATE_TRANSIENT_MAX_ATTEMPTS) throw error;
+        await sleep(transientBackoffMs(attempt - 1), setTimeoutFn);
+      }
+    }
+  }
+  async function hydrate2(preferredLocal, options = {}) {
     const local = readLocal(preferredLocal);
+    syncLearnerDedupeScope(auth);
     if (!signedIn(auth) || typeof api?.getActivityState !== "function") {
       if (local) writeLocal(local);
       return local;
     }
-    let server = null;
-    try {
-      server = asRecord(firstRow(await api.getActivityState({
-        activityKey: key,
-        activityVersion: version
-      })));
-    } catch {
+    const learnerKey = learnerCacheKey(auth);
+    if (isActivityStateLearnerBlocked(learnerKey)) {
       if (local) writeLocal(local);
       return local;
     }
-    const resolved = reconcileActivityState(
-      { state: local, updatedAt: local?.updatedAt },
-      server ? { state: server.state, updatedAt: server.updatedAt } : null
-    );
-    if (resolved.state) {
-      const next = {
-        ...resolved.state,
-        updatedAt: resolved.updatedAt || resolved.state.updatedAt || (/* @__PURE__ */ new Date()).toISOString(),
-        startedAt: resolved.state.startedAt || server?.startedAt || resolved.state.startedAt
-      };
-      writeLocal(next);
-      if (resolved.migrate) {
+    const fresh = Boolean(options && options.fresh);
+    const dedupeKey = readDedupeKey();
+    if (fresh) completedReads.delete(dedupeKey);
+    else if (completedReads.has(dedupeKey)) {
+      return local;
+    }
+    if (inflightReads.has(dedupeKey)) {
+      try {
+        await inflightReads.get(dedupeKey);
+      } catch {
+      }
+      if (isActivityStateLearnerBlocked(learnerKey)) {
+        return readLocal(preferredLocal);
+      }
+      if (!fresh && completedReads.has(dedupeKey)) {
+        return readLocal(preferredLocal);
+      }
+      if (inflightReads.has(dedupeKey)) {
         try {
-          await pushServer(next);
+          await inflightReads.get(dedupeKey);
         } catch {
         }
+        return readLocal(preferredLocal);
       }
-      return next;
     }
-    return null;
+    const pending = (async () => {
+      let server = null;
+      try {
+        server = await readServerStateWithPolicy();
+      } catch (error) {
+        throw error;
+      }
+      completedReads.add(dedupeKey);
+      if (server) rememberPersisted(server);
+      const resolved = reconcileActivityState(
+        { state: local, updatedAt: local?.updatedAt },
+        server ? { state: server.state, updatedAt: server.updatedAt } : null
+      );
+      if (resolved.state) {
+        const next = {
+          ...resolved.state,
+          updatedAt: resolved.updatedAt || resolved.state.updatedAt || (/* @__PURE__ */ new Date()).toISOString(),
+          startedAt: resolved.state.startedAt || server?.startedAt || resolved.state.startedAt
+        };
+        writeLocal(next);
+        if (resolved.source === "server") dirty = false;
+        if (resolved.migrate) {
+          try {
+            await pushServer(next);
+          } catch {
+          }
+        }
+        if (options.remote && resolved.source === "server") notifyRemote(next);
+        return next;
+      }
+      return null;
+    })();
+    inflightReads.set(dedupeKey, pending);
+    try {
+      return await pending;
+    } catch {
+      if (local) writeLocal(local);
+      return local;
+    } finally {
+      if (inflightReads.get(dedupeKey) === pending) inflightReads.delete(dedupeKey);
+    }
   }
-  async function clear() {
+  async function clear(clearOptions = {}) {
     cancelPending();
-    if (options.local !== false) {
+    invalidateActivityStateReads({
+      learnerKey: learnerCacheKey(auth),
+      activityKey: key,
+      activityVersion: version
+    });
+    dirty = false;
+    knownRevision = 0;
+    knownUpdatedAt = 0;
+    pendingRemoteRevision = 0;
+    if (clearOptions.local !== false) {
       removeKey(storage, cacheKey());
       (Array.isArray(legacyKeys) ? legacyKeys : []).forEach((legacyKey) => removeKey(storage, legacyKey));
     }
@@ -1398,11 +1889,24 @@ function createActivityStateStore({
   function destroy() {
     destroyed = true;
     if (pendingTimer != null) clearTimeoutFn(pendingTimer);
+    if (coalesceTimer != null) {
+      clearTimeoutFn(coalesceTimer);
+      coalesceTimer = null;
+      const resolvers = coalesceResolvers;
+      coalesceResolvers = [];
+      resolvers.forEach((fn) => fn(null));
+    }
+    listeners2.clear();
+    storeRegistry.delete(registryKey);
+    if (typeof globalThis.removeEventListener === "function") {
+      globalThis.removeEventListener("pagehide", onHide);
+      globalThis.removeEventListener("beforeunload", onHide);
+    }
   }
+  const onHide = () => {
+    if (!destroyed) flush();
+  };
   if (typeof globalThis.addEventListener === "function") {
-    const onHide = () => {
-      if (!destroyed) flush();
-    };
     globalThis.addEventListener("pagehide", onHide);
     globalThis.addEventListener("beforeunload", onHide);
   }
@@ -1415,21 +1919,27 @@ function createActivityStateStore({
     flush,
     clear,
     destroy,
+    subscribe,
+    handleRemoteInvalidation,
+    isDirty,
+    markDirty,
+    knownRevision: () => knownRevision,
+    pendingRemoteRevision: () => pendingRemoteRevision,
     load: () => readLocal()
   });
 }
 
 // src/core/progress/progress-service.js
-function firstRow2(result) {
+function firstRow3(result) {
   if (Array.isArray(result)) return result[0] || null;
   return result || null;
 }
-function createProgressService(api, options2 = {}) {
+function createProgressService(api, options = {}) {
   return Object.freeze({
     getProgress: (activityKey) => api.getProgress(activityKey),
     getAttempts: (activityKey) => api.getAttempts(activityKey),
     getResponses: (activityKey) => api.getResponses(activityKey),
-    getActivityState: async (activityKey, activityVersion) => firstRow2(
+    getActivityState: async (activityKey, activityVersion) => firstRow3(
       await api.getActivityState({
         activityKey,
         activityVersion: canonicalActivityVersion(activityVersion)
@@ -1440,17 +1950,20 @@ function createProgressService(api, options2 = {}) {
       activityVersion: canonicalActivityVersion(activityVersion),
       state,
       clientUpdatedAt: extras.clientUpdatedAt,
-      hubCode: extras.hubCode ?? options2.hubCode
+      hubCode: extras.hubCode ?? options.hubCode
     }),
     clearActivityState: (activityKey, activityVersion) => api.clearActivityState({
       activityKey,
       activityVersion: canonicalActivityVersion(activityVersion)
     }),
-    createStore: (storeOptions = {}) => createActivityStateStore({
+    getLearnerIdentityBlock: () => getActivityStateLearnerBlock(learnerCacheKey(options.auth)),
+    subscribeLearnerIdentityRecovery: subscribeActivityStateIdentityRecovery,
+    learnerIdentityMessage: LEARNER_IDENTITY_MESSAGE,
+    createStore: (storeOptions = {}) => getOrCreateActivityStateStore({
       api,
-      auth: options2.auth,
-      storage: storeOptions.storage ?? options2.storage,
-      hubCode: options2.hubCode,
+      auth: options.auth,
+      storage: storeOptions.storage ?? options.storage,
+      hubCode: options.hubCode,
       debounceMs: storeOptions.debounceMs,
       legacyKeys: storeOptions.legacyKeys,
       setTimeoutFn: storeOptions.setTimeoutFn,
@@ -1458,6 +1971,124 @@ function createProgressService(api, options2 = {}) {
       activityKey: storeOptions.activityKey,
       activityVersion: storeOptions.activityVersion
     })
+  });
+}
+
+// src/core/progress/activity-state-sync.js
+function userIdFromAuth(auth) {
+  try {
+    const session = typeof auth?.getSession === "function" ? auth.getSession() : null;
+    return session?.user?.id || null;
+  } catch {
+    return null;
+  }
+}
+function createActivityStateSync({
+  client,
+  auth,
+  getStore = getRegisteredActivityStateStore,
+  listStores = listRegisteredActivityStateStores,
+  coalesceMs
+} = {}) {
+  let channel = null;
+  let currentUserId = null;
+  let hasSubscribed = false;
+  let reconnectPending = false;
+  let reconcileInFlight = false;
+  function learnerKey() {
+    return learnerCacheKey(auth);
+  }
+  function handlePayload(payload) {
+    if (!payload || typeof payload !== "object") return;
+    const activityId = payload.activityId || payload.activity_id;
+    const version = payload.version || payload.activityVersion;
+    if (!activityId) return;
+    const store = getStore(learnerKey(), activityId, version);
+    if (!store || typeof store.handleRemoteInvalidation !== "function") return;
+    store.handleRemoteInvalidation(payload, { coalesceMs });
+  }
+  async function reconcileOnce() {
+    if (reconcileInFlight) return;
+    reconcileInFlight = true;
+    try {
+      const key = learnerKey();
+      if (typeof getActivityStateLearnerBlock === "function" && getActivityStateLearnerBlock(key)) return;
+      const stores = listStores();
+      await Promise.all(stores.map((store) => {
+        if (!store || typeof store.handleRemoteInvalidation !== "function") return null;
+        if (typeof store.isDirty === "function" && store.isDirty()) return null;
+        return store.handleRemoteInvalidation({
+          activityId: store.activityKey
+        }, { coalesceMs: 0, force: true });
+      }));
+    } finally {
+      reconcileInFlight = false;
+    }
+  }
+  async function stop() {
+    const current = channel;
+    channel = null;
+    currentUserId = null;
+    hasSubscribed = false;
+    reconnectPending = false;
+    if (!current) return;
+    try {
+      if (typeof client?.removeChannel === "function") await client.removeChannel(current);
+      else if (typeof current.unsubscribe === "function") await current.unsubscribe();
+    } catch {
+    }
+  }
+  async function start() {
+    const userId = userIdFromAuth(auth);
+    if (!userId || typeof client?.channel !== "function") return;
+    if (channel && currentUserId === userId) {
+      if (typeof client.realtime?.setAuth === "function") {
+        try {
+          await client.realtime.setAuth();
+        } catch {
+        }
+      }
+      return;
+    }
+    await stop();
+    currentUserId = userId;
+    if (typeof client.realtime?.setAuth === "function") {
+      try {
+        await client.realtime.setAuth();
+      } catch {
+      }
+    }
+    const topic = activityStateSyncTopic(userId);
+    const next = client.channel(topic, { config: { private: true } });
+    if (!next || typeof next.on !== "function" || typeof next.subscribe !== "function") return;
+    channel = next;
+    next.on("broadcast", { event: ACTIVITY_STATE_INVALIDATION_EVENT }, (message) => {
+      handlePayload(message?.payload || message);
+    });
+    next.subscribe((status) => {
+      if (status === "SUBSCRIBED") {
+        if (hasSubscribed && reconnectPending) {
+          reconnectPending = false;
+          void reconcileOnce();
+        }
+        hasSubscribed = true;
+        return;
+      }
+      if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+        if (hasSubscribed) reconnectPending = true;
+      }
+    });
+  }
+  return Object.freeze({
+    start,
+    stop,
+    handlePayload,
+    reconcileOnce,
+    reset: async () => {
+      await stop();
+      resetActivityStateDedupe();
+    },
+    currentTopic: () => currentUserId ? activityStateSyncTopic(currentUserId) : null
   });
 }
 
@@ -2108,21 +2739,21 @@ function createPlatformState(initial = "loading") {
     throw new PlatformError({ code: "INVALID_PLATFORM_STATE", category: "configuration" });
   }
   let current = Object.freeze({ status: initial, detail: null, changedAt: (/* @__PURE__ */ new Date()).toISOString() });
-  const listeners = /* @__PURE__ */ new Set();
+  const listeners2 = /* @__PURE__ */ new Set();
   function transition(status, detail = null) {
     if (!PLATFORM_STATES.includes(status)) {
       throw new PlatformError({ code: "INVALID_PLATFORM_STATE", category: "platform" });
     }
     current = Object.freeze({ status, detail, changedAt: (/* @__PURE__ */ new Date()).toISOString() });
-    listeners.forEach((listener) => listener(current));
+    listeners2.forEach((listener) => listener(current));
     return current;
   }
   function subscribe(listener) {
     if (typeof listener !== "function") return () => {
     };
-    listeners.add(listener);
+    listeners2.add(listener);
     listener(current);
-    return () => listeners.delete(listener);
+    return () => listeners2.delete(listener);
   }
   return Object.freeze({
     getState: () => current,
@@ -2178,7 +2809,7 @@ function createLogger({ sink = globalThis.console, level = "warn", context = {} 
 // src/core/feature-flags/feature-flags.js
 function createFeatureFlags(initial = {}) {
   let flags = Object.freeze(normalise(initial));
-  let listeners = /* @__PURE__ */ new Set();
+  let listeners2 = /* @__PURE__ */ new Set();
   function normalise(value) {
     return Object.fromEntries(
       Object.entries(value || {}).map(([key, enabled]) => [key, Boolean(enabled)])
@@ -2189,15 +2820,15 @@ function createFeatureFlags(initial = {}) {
   }
   function set(next) {
     flags = Object.freeze({ ...flags, ...normalise(next) });
-    listeners.forEach((listener) => listener(flags));
+    listeners2.forEach((listener) => listener(flags));
     return flags;
   }
   function subscribe(listener) {
     if (typeof listener !== "function") return () => {
     };
-    listeners.add(listener);
+    listeners2.add(listener);
     listener(flags);
-    return () => listeners.delete(listener);
+    return () => listeners2.delete(listener);
   }
   return Object.freeze({
     isEnabled: (name) => flags[name] === true,
@@ -2232,7 +2863,7 @@ var LEARNER_LABELS = Object.freeze({
   INCOMPATIBLE: "Unavailable to save",
   ERROR: "Temporarily unable to save progress"
 });
-function firstRow3(payload) {
+function firstRow4(payload) {
   if (Array.isArray(payload)) return payload[0] || null;
   if (payload && typeof payload === "object") return payload;
   return null;
@@ -2365,7 +2996,7 @@ function createPublicationResolver({
   async function fetchPublishedPackage(hubCode, courseKey, packageVersion) {
     if (typeof api?.getPublishedCurriculumPackage === "function") {
       const payload = await api.getPublishedCurriculumPackage(hubCode, courseKey, packageVersion);
-      const row2 = firstRow3(payload);
+      const row2 = firstRow4(payload);
       if (!row2 || !row2.package) throw new Error("publication-lookup-empty");
       return row2;
     }
@@ -2390,7 +3021,7 @@ function createPublicationResolver({
       body: JSON.stringify(body)
     });
     if (!response?.ok) throw new Error("publication-lookup-failed");
-    const row = firstRow3(await response.json());
+    const row = firstRow4(await response.json());
     if (!row || !row.package) throw new Error("publication-lookup-empty");
     return row;
   }
@@ -2464,23 +3095,23 @@ function renderPublicationStatus(state) {
   const modifier = String(state.state || "ERROR").toLowerCase().replace(/_/g, "-");
   return `<section class="publication-banner publication-banner--${modifier}" role="status" data-publication-state="${state.state}"><strong>${LEARNER_LABELS[state.state]}</strong><p>${LEARNER_COPY[state.state]}</p></section>`;
 }
-function createPublishedCurriculumService(options2 = {}) {
-  const hubCode = String(options2.hubCode || "").trim();
-  const courseKey = String(options2.courseKey || "").trim();
-  const schemaLoader = options2.schemaLoader || createRuntimeSchemaLoader({
-    supportedSchemaVersion: options2.supportedSchemaVersion,
-    supportedPackageVersion: options2.supportedPackageVersion
+function createPublishedCurriculumService(options = {}) {
+  const hubCode = String(options.hubCode || "").trim();
+  const courseKey = String(options.courseKey || "").trim();
+  const schemaLoader = options.schemaLoader || createRuntimeSchemaLoader({
+    supportedSchemaVersion: options.supportedSchemaVersion,
+    supportedPackageVersion: options.supportedPackageVersion
   });
-  const validator = options2.validator || createCurriculumValidator({
-    validatePackage: options2.validatePackage
+  const validator = options.validator || createCurriculumValidator({
+    validatePackage: options.validatePackage
   });
-  const cache = options2.cache || createCacheManager(options2.storage);
-  const resolver = options2.resolver || createPublicationResolver({
-    api: options2.api,
-    fetchFn: options2.fetch || globalThis.fetch,
-    projectUrl: options2.projectUrl || options2.supabase?.projectUrl || options2.config?.projectUrl,
-    publishableKey: options2.publishableKey || options2.supabase?.publishableKey || options2.config?.publishableKey,
-    getAccessToken: options2.getAccessToken || (() => options2.session?.access_token)
+  const cache = options.cache || createCacheManager(options.storage);
+  const resolver = options.resolver || createPublicationResolver({
+    api: options.api,
+    fetchFn: options.fetch || globalThis.fetch,
+    projectUrl: options.projectUrl || options.supabase?.projectUrl || options.config?.projectUrl,
+    publishableKey: options.publishableKey || options.supabase?.publishableKey || options.config?.publishableKey,
+    getAccessToken: options.getAccessToken || (() => options.session?.access_token)
   });
   let current = null;
   function setState(state) {
@@ -2488,7 +3119,7 @@ function createPublishedCurriculumService(options2 = {}) {
     return current;
   }
   async function fallback(reason, packageVersion) {
-    const loadBundled = options2.loadBundled;
+    const loadBundled = options.loadBundled;
     if (typeof loadBundled !== "function") {
       const cached = cache.read(hubCode, courseKey, packageVersion || "latest");
       if (cached?.package && validator.validate(cached.package).valid) {
@@ -2574,9 +3205,12 @@ function createPublishedCurriculumService(options2 = {}) {
   });
 }
 export {
+  LEARNER_IDENTITY_MESSAGE,
   assertSecureSubmission,
+  classifyActivityStateError,
   cleanAuthCallbackFromUrl,
   createActivityStateStore,
+  createActivityStateSync,
   createAssignmentService,
   createAuthService,
   createAuthStorageKey,
@@ -2597,12 +3231,17 @@ export {
   createSubmissionService,
   createSupabaseClient,
   derivePlatformState,
+  getActivityStateLearnerBlock,
+  isActivityStateLearnerBlocked,
   isHubEnrolledStatus,
+  isLearnerIdentityError,
   isRetryableAuthNetworkError,
   isStaleAuthSessionError,
   mapPlatformError,
   reconcileActivityState,
+  recoverLearnerIdentityOnce,
   redact,
+  resetActivityStateDedupe,
   resolveAuthRedirectUrl,
   sanitizeActivityState,
   toApiResponse

@@ -4,6 +4,40 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## [Unreleased]
 
+- Permanent activity-state identity failures (`STUDENT_IDENTITY_NOT_FOUND`,
+  401/403) circuit-break for the signed-in learner: one shared
+  `ensure_learner_auth_link` recovery attempt, then no further
+  `get_activity_state` retries for that session. Transient 5xx/network
+  faults use bounded exponential backoff (max 4 attempts).
+- Learner hubs can read `progress.getLearnerIdentityBlock()` /
+  `progress.learnerIdentityMessage` for a safe learner-facing notice.
+
+- Learner interaction can mark an interned activity store dirty in memory
+  (`markDirty()`) without `get_activity_state`, `save_activity_state`, or
+  `mark_formative_response`. Dirty / pending / save-failed stores still defer
+  the newest remote revision and do not overwrite unsaved local work.
+
+## 0.2.22 - 2026-09-12
+
+### Fixed
+
+- Activity-state restore no longer issues a new `get_activity_state` call for
+  every WeekPage re-render or interactive rebind. Identical in-flight reads
+  share one request. A successful read is remembered for the current JS
+  session only (cleared on `clear()`, `hydrate(..., { fresh: true })`, or
+  identity/version change). This is not a payload cache and does not bypass
+  server marking.
+- Unchanged activity-state drafts no longer call `save_activity_state`.
+  Comparison uses the persistable payload (responses, checked, results) and
+  ignores `updatedAt`. Failed saves stay retryable. Try Again / Check payload
+  changes still write.
+- Cross-device activity-state restore uses one private Realtime Broadcast
+  channel per authenticated learner (`learner-state:<auth uid>`). Events are
+  tiny invalidation payloads (`activityId`, `version`, `revision`,
+  `updatedAt`) and refresh only that activity. Unsaved local drafts are not
+  overwritten. Own-save echoes are ignored. Reconnect reconciles mounted
+  stores once. Marking is unchanged.
+
 ## 0.2.21 - 2026-09-10
 
 ### Fixed
