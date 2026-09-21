@@ -1421,18 +1421,18 @@ No new evidence of duplicate channels, failed cleanup, reconnect multiplication,
 
 ### 17.7 Integration deployment record
 
-The earlier Phase 3.5 patch existed only locally. It was **not** live until this integration. Production SHAs below are filled after merge + GitHub Pages deploy.
+The earlier Phase 3.5 patch existed only locally. It was deployed only during this integration (2026-09-21).
 
-| Component | Final implementation | Tests (this integration) | Remediation branch | Production SHA | Core pin |
-|---|---|---|---|---|---|
-| Unit 14 | Core 0.2.22 intern; no hub intern | `test:node` 84 passed | `fix/phase-3-5-request-leakage` | pending merge | **0.2.22** |
-| L2E | Core 0.2.22 intern; no hub intern; `recoverLearner` kept | `test:node` 28 passed; `platform-runtime` 13 passed | `fix/phase-3-5-request-leakage` | pending merge | **0.2.22** |
-| Unit 3 | `hydratedWeeks` + bootstrap skip | `test:node` TAP 76 passed + 249 supabase static checks | `fix/phase-3-5-request-leakage` | pending merge | **0.2.25** |
-| T Level | bootstrap skip | `test:node` 102 passed | `fix/phase-3-5-request-leakage` | pending merge | **0.2.25** |
-| Admin | state-aware Group Generator poll | poll/roles 5 passed (Node 22) | `fix/phase-3-5-request-leakage` | pending merge | n/a |
-| Core | this §17 correction only | docs | `docs/phase-3-5-request-leakage` | pending merge | n/a |
+| Component | Final implementation | Tests | Remediation commit | Production SHA | Deployment | Live evidence | Core pin |
+|---|---|---|---|---|---|---|---|
+| Unit 14 | Core 0.2.22 intern; **no hub intern** | `test:node` **84 passed** | `c0c6bbc` | `e309b7f` | [Pages success](https://github.com/Acerosa/unit-14-software-engineering-for-business-hub/actions/runs/35641605578) | Live bundle still `main-D726A9-B.js` (tests-only change). Pin `0.2.22`. No `completedHydrates`. Intern tests on production SHA. | **0.2.22** |
+| L2E | Core 0.2.22 intern; **no hub intern**; `recoverLearner` **kept** | `test:node` **28 passed**; platform-runtime **13 passed** | `b7678d2` | `b85e5cf` | [Pages success](https://github.com/Acerosa/Emerging-Digital-Technologies-Hub/actions/runs/35641811404) | Live bundle still `main-CO3YH8JR.js`. Recover path still always refreshes (no authenticated+context skip). | **0.2.22** |
+| Unit 3 | `hydratedWeeks` + bootstrap skip | TAP **76 passed** + 249 supabase static checks | `9eea25e` | `db7fbca` | [Pages success](https://github.com/Acerosa/unit-3-Cyber-Security-Hub/actions/runs/35641865046) | Live `js/core/backend-progress.js` contains `hydratedWeeks`. Live `main-XyiV4TsS.js` contains authenticated+context skip. | **0.2.25** |
+| T Level | bootstrap skip | `test:node` **102 passed** | `f75bad7` | `a3cb96e` | [Pages success](https://github.com/Acerosa/tlevel-software-development-hub/actions/runs/35641604350) | Live `main-y--pZQ54.js` contains authenticated+context skip. | **0.2.25** |
+| Admin | state-aware Group Generator poll | poll/roles **5 passed** (Node 22) | `931f3a8` | `07d7f94` | [Pages success](https://github.com/Acerosa/learning-platform-admin/actions/runs/35641605308) | Live `index-DSU7TMyE.js` contains 2500ms poll helper, hidden-tab stop, interval keyed on session id/status. | n/a |
+| Core | this section 17 correction | docs `quality` passed | `db8d2fa` | `ef1f71c` | [Quality success](https://github.com/Acerosa/learning-platform-core/actions/runs/35641603943) | Audit only. | n/a |
 
-Live request behaviour for Unit 14 / L2E / Unit 3 / T Level / Admin is **proven by deployed code + regression tests**, not by a live network trace, unless a later measurement pass records otherwise.
+**Proof class:** request behaviour in this pass is **PROVEN BY DEPLOYED CODE + REGRESSION TEST**. It is **not** proven by a live network trace.
 
 *Phase 3.5 stops here. Do not start Phase 4 optimisation.*
 
