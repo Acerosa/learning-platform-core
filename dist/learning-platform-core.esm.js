@@ -373,6 +373,76 @@ function createSupabaseClient(config = {}, dependencies = {}) {
   return createClient(projectUrl, publishableKey, { auth });
 }
 
+// src/core/logging/request-counter.js
+var REQUEST_CATEGORIES = Object.freeze([
+  "AUTH_BOOTSTRAP",
+  "CURRICULUM",
+  "ASSIGNMENTS",
+  "GET_ACTIVITY_STATE",
+  "SAVE_ACTIVITY_STATE",
+  "SUBMIT_ATTEMPT",
+  "PROGRESS",
+  "REALTIME",
+  "ADMIN",
+  "OTHER"
+]);
+var AUTH_BOOTSTRAP_OPS = /* @__PURE__ */ new Set([
+  "getUser",
+  "signIn",
+  "signUp",
+  "signOut",
+  "refreshSession",
+  "ensure_learner_auth_link",
+  "my_profile",
+  "my_enrolments",
+  "resolve_learner_hub_access",
+  "complete_learner_onboarding",
+  "join_learner_hub_group",
+  "registration_options"
+]);
+var CURRICULUM_OPS = /* @__PURE__ */ new Set(["published_curriculum", "published_curriculum_package"]);
+var ASSIGNMENT_OPS = /* @__PURE__ */ new Set(["my_hub_assignments", "my_assignments", "my_activity_delivery"]);
+var PROGRESS_OPS = /* @__PURE__ */ new Set(["my_activity_progress", "my_attempts", "my_responses", "mark_formative_response"]);
+var REALTIME_OPS = /* @__PURE__ */ new Set(["setAuth", "channel.subscribe", "channel.unsubscribe"]);
+function emptyCounts() {
+  const counts2 = { TOTAL: 0 };
+  REQUEST_CATEGORIES.forEach((category) => {
+    counts2[category] = 0;
+  });
+  return counts2;
+}
+var counts = emptyCounts();
+var operations = [];
+var debugEnabled = false;
+var debugSink = null;
+function categorizePlatformRequest(kind, name) {
+  const op = String(name || "");
+  if (kind === "admin" || op.startsWith("list_hub_learning") || op.startsWith("summarise_hub_learning") || op.startsWith("admin_api.") || op.startsWith("get_grouping_session")) {
+    return "ADMIN";
+  }
+  if (kind === "realtime" || REALTIME_OPS.has(op)) return "REALTIME";
+  if (kind === "auth" || AUTH_BOOTSTRAP_OPS.has(op)) return "AUTH_BOOTSTRAP";
+  if (CURRICULUM_OPS.has(op)) return "CURRICULUM";
+  if (ASSIGNMENT_OPS.has(op)) return "ASSIGNMENTS";
+  if (op === "get_activity_state") return "GET_ACTIVITY_STATE";
+  if (op === "save_activity_state" || op === "clear_activity_state") return "SAVE_ACTIVITY_STATE";
+  if (op === "submit_attempt") return "SUBMIT_ATTEMPT";
+  if (PROGRESS_OPS.has(op)) return "PROGRESS";
+  return "OTHER";
+}
+function recordPlatformRequest(kind, name) {
+  const operation = String(name || "unknown");
+  const category = categorizePlatformRequest(kind, operation);
+  counts[category] += 1;
+  counts.TOTAL += 1;
+  if (operations.length < 500) {
+    operations.push(Object.freeze({ category, operation, kind: String(kind || "rpc") }));
+  }
+  if (debugEnabled && typeof debugSink === "function") {
+    debugSink({ category, operation, kind: String(kind || "rpc") });
+  }
+}
+
 // src/core/api/learner-api.js
 function unwrap(result2, operation) {
   if (result2?.error) throw mapPlatformError(result2.error, { operation });
@@ -391,6 +461,7 @@ function createLearnerApi({ client, schema = "api", logger } = {}) {
   const api = client.schema(schema);
   async function read(view, { select = "*", order, ascending = true, filters = [] } = {}) {
     try {
+      recordPlatformRequest("read", view);
       let query = api.from(view).select(select);
       filters.forEach(({ column, value }) => {
         if (value !== void 0 && value !== null && value !== "") query = query.eq(column, value);
@@ -404,6 +475,7 @@ function createLearnerApi({ client, schema = "api", logger } = {}) {
   }
   async function rpc(name, payload = {}) {
     try {
+      recordPlatformRequest("rpc", name);
       return unwrap(await api.rpc(name, payload), `rpc:${name}`);
     } catch (error) {
       logger?.warn("api.rpc.failed", { rpc: name, code: error?.code });
@@ -569,6 +641,13 @@ function isRetryableAuthNetworkError(error) {
 
 // src/core/auth/auth-service.js
 var STALE_SESSION_COPY = "Your previous session is no longer valid. Please sign in again.";
+function sessionUserId(session) {
+  return session?.user?.id || null;
+}
+function sameAuthUser(left, right) {
+  const leftId = sessionUserId(left);
+  return Boolean(leftId) && leftId === sessionUserId(right);
+}
 function staleSessionError(cause) {
   return new PlatformError({
     code: "AUTH_SESSION_STALE",
@@ -596,6 +675,28 @@ function createAuthService({ client, logger, resolveRedirectUrl, cleanAuthCallba
     state = Object.freeze({ ...state, ...next });
     listeners2.forEach((listener) => listener(state));
     return state;
+  }
+  function replaceSessionQuietly(session) {
+    state = Object.freeze({ ...state, status: "authenticated", session, error: null });
+    return state;
+  }
+  function refreshRealtimeAuth() {
+    if (typeof client.realtime?.setAuth !== "function") return;
+    recordPlatformRequest("realtime", "setAuth");
+    void client.realtime.setAuth().catch(() => {
+    });
+  }
+  function applyAuthenticatedSession(session, { notify } = { notify: true }) {
+    if (!notify) {
+      replaceSessionQuietly(session);
+      refreshRealtimeAuth();
+      return state;
+    }
+    return publish({ status: "authenticated", session, error: null });
+  }
+  function shouldQuietlyRotateSession(event, session) {
+    if (state.status !== "authenticated" || !sameAuthUser(state.session, session)) return false;
+    return event === "TOKEN_REFRESHED" || event === "INITIAL_SESSION" || event === "SIGNED_IN" || event === "USER_UPDATED";
   }
   function subscribe(listener) {
     if (typeof listener !== "function") return () => {
@@ -636,6 +737,7 @@ function createAuthService({ client, logger, resolveRedirectUrl, cleanAuthCallba
     let result2;
     try {
       result2 = await client.auth.getUser();
+      recordPlatformRequest("auth", "getUser");
     } catch (error) {
       if (isRetryableAuthNetworkError(error)) {
         return { ok: false, network: true, error };
@@ -677,9 +779,13 @@ function createAuthService({ client, logger, resolveRedirectUrl, cleanAuthCallba
       if (event === "SIGNED_OUT" || !session) {
         const keepStale = state.error?.code === "AUTH_SESSION_STALE" ? state.error : null;
         publish({ status: "signed-out", session: null, error: keepStale });
-      } else {
-        publish({ status: "authenticated", session, error: null });
+        return;
       }
+      if (shouldQuietlyRotateSession(event, session)) {
+        applyAuthenticatedSession(session, { notify: false });
+        return;
+      }
+      applyAuthenticatedSession(session, { notify: true });
     });
     initialisePromise = (async () => {
       try {
@@ -733,6 +839,7 @@ function createAuthService({ client, logger, resolveRedirectUrl, cleanAuthCallba
   async function signIn(email, password) {
     publish({ status: "signing-in", error: null });
     try {
+      recordPlatformRequest("auth", "signIn");
       const result2 = await client.auth.signInWithPassword({ email: String(email || "").trim(), password });
       if (result2.error) throw result2.error;
       staleRecoveryAttempted = false;
@@ -774,6 +881,7 @@ function createAuthService({ client, logger, resolveRedirectUrl, cleanAuthCallba
   }
   async function signOut() {
     try {
+      recordPlatformRequest("auth", "signOut");
       const result2 = await client.auth.signOut({ scope: "local" });
       if (result2?.error) throw result2.error;
     } catch (error) {
@@ -786,6 +894,7 @@ function createAuthService({ client, logger, resolveRedirectUrl, cleanAuthCallba
   }
   async function refreshSession() {
     try {
+      recordPlatformRequest("auth", "refreshSession");
       const result2 = await client.auth.refreshSession();
       if (result2?.error) throw result2.error;
       const session = result2?.data?.session || null;
@@ -802,7 +911,8 @@ function createAuthService({ client, logger, resolveRedirectUrl, cleanAuthCallba
         });
       }
       staleRecoveryAttempted = false;
-      return publish({ status: "authenticated", session, error: null });
+      const notify = state.status !== "authenticated" || !sameAuthUser(state.session, session);
+      return applyAuthenticatedSession(session, { notify });
     } catch (error) {
       if (error instanceof PlatformError && error.code === "SESSION_REFRESH_REQUIRED") throw error;
       if (isRetryableAuthNetworkError(error)) {
@@ -873,9 +983,27 @@ function createEnrolmentService(api) {
 
 // src/core/assignment/assignment-service.js
 function createAssignmentService(api) {
+  const hubAssignmentCache = /* @__PURE__ */ new Map();
+  async function getHubAssignments(hubCode) {
+    const key = String(hubCode || "");
+    const rows = await api.getHubAssignments(hubCode);
+    const list = Array.isArray(rows) ? rows : [];
+    if (key) hubAssignmentCache.set(key, list);
+    return list;
+  }
+  function getCachedHubAssignments(hubCode) {
+    const key = String(hubCode || "");
+    if (!key || !hubAssignmentCache.has(key)) return null;
+    return hubAssignmentCache.get(key);
+  }
+  function clearHubAssignmentCache() {
+    hubAssignmentCache.clear();
+  }
   return Object.freeze({
     getAssignments: () => api.getAssignments(),
-    getHubAssignments: (hubCode) => api.getHubAssignments(hubCode),
+    getHubAssignments,
+    getCachedHubAssignments,
+    clearHubAssignmentCache,
     getCurriculumDelivery: () => api.getCurriculumDelivery()
   });
 }
@@ -1787,13 +1915,26 @@ function createActivityStateStore({
       globalThis.removeEventListener("pagehide", onHide);
       globalThis.removeEventListener("beforeunload", onHide);
     }
+    if (visibilityNode && typeof visibilityNode.removeEventListener === "function") {
+      visibilityNode.removeEventListener("visibilitychange", onVisibility);
+    }
   }
   const onHide = () => {
     if (!destroyed) flush();
   };
+  function documentIsHidden() {
+    return Boolean(visibilityNode && visibilityNode.visibilityState === "hidden");
+  }
+  function onVisibility() {
+    if (!destroyed && documentIsHidden()) flush();
+  }
+  const visibilityNode = typeof document !== "undefined" && document && typeof document.addEventListener === "function" ? document : null;
   if (typeof globalThis.addEventListener === "function") {
     globalThis.addEventListener("pagehide", onHide);
     globalThis.addEventListener("beforeunload", onHide);
+  }
+  if (visibilityNode) {
+    visibilityNode.addEventListener("visibilitychange", onVisibility);
   }
   return Object.freeze({
     activityKey: key,
@@ -1929,6 +2070,7 @@ function createActivityStateSync({
     if (channel && currentUserId === userId) {
       if (typeof client.realtime?.setAuth === "function") {
         try {
+          recordPlatformRequest("realtime", "setAuth");
           await client.realtime.setAuth();
         } catch {
         }
@@ -1939,6 +2081,7 @@ function createActivityStateSync({
     currentUserId = userId;
     if (typeof client.realtime?.setAuth === "function") {
       try {
+        recordPlatformRequest("realtime", "setAuth");
         await client.realtime.setAuth();
       } catch {
       }
@@ -1947,6 +2090,7 @@ function createActivityStateSync({
     const next = client.channel(topic, { config: { private: true } });
     if (!next || typeof next.on !== "function" || typeof next.subscribe !== "function") return;
     channel = next;
+    recordPlatformRequest("realtime", "channel.subscribe");
     next.on("broadcast", { event: ACTIVITY_STATE_INVALIDATION_EVENT }, (message) => {
       handlePayload(message?.payload || message);
     });
@@ -2009,6 +2153,7 @@ function normaliseEnrolments(rows) {
 function createLearnerContext({ authService, profileService, enrolmentService } = {}) {
   let state = Object.freeze({ status: "loading", context: null, error: null });
   let refreshPromise = null;
+  let lastAuthUserId = null;
   const listeners2 = /* @__PURE__ */ new Set();
   function publish(next) {
     state = Object.freeze({ ...state, ...next });
@@ -2051,9 +2196,18 @@ function createLearnerContext({ authService, profileService, enrolmentService } 
     return refreshPromise;
   }
   authService.subscribe((authState) => {
-    if (authState.status === "authenticated") refresh().catch(() => {
-    });
-    if (authState.status === "signed-out") publish({ status: "signed-out", context: null, error: null });
+    if (authState.status === "signed-out") {
+      lastAuthUserId = null;
+      publish({ status: "signed-out", context: null, error: null });
+      return;
+    }
+    if (authState.status === "authenticated") {
+      const userId = authState.session?.user?.id || null;
+      if (state.status === "authenticated" && lastAuthUserId && lastAuthUserId === userId) return;
+      lastAuthUserId = userId;
+      refresh().catch(() => {
+      });
+    }
   });
   return Object.freeze({
     initialise: async () => {
@@ -3195,9 +3349,49 @@ function createPublishedCurriculumService(options = {}) {
     getAccessToken: options.getAccessToken || (() => options.session?.access_token)
   });
   let current = null;
+  let loaded = null;
+  let inflight = null;
   function setState(state) {
     current = state || null;
     return current;
+  }
+  function remember(result2) {
+    loaded = result2;
+    return result2;
+  }
+  function publicationVersion(value) {
+    if (!value || typeof value !== "object") return "";
+    return String(
+      value.package_version || value.packageVersion || value.version || value.package?.version || ""
+    );
+  }
+  function metadataForHub(rows) {
+    const list = Array.isArray(rows) ? rows : rows ? [rows] : [];
+    return list.find((row) => (row?.hub_code || row?.hubCode) === hubCode && (row?.course_key || row?.courseKey) === courseKey) || null;
+  }
+  function publishedFromCache(cached, reason) {
+    const state = publicationResult(
+      "PUBLISHED",
+      localContext(cached.package, hubCode, courseKey, schemaLoader.supportedSchemaVersion, schemaLoader.supportedPackageVersion),
+      mapPublication(cached)
+    );
+    return remember({
+      source: reason || "published",
+      package: cached.package,
+      state: setState(state),
+      publication: state.publication
+    });
+  }
+  async function matchingCachedPublication(cached) {
+    if (!cached?.package || !validator.validate(cached.package).valid) return null;
+    if (typeof options.api?.getPublishedCurriculum !== "function") return null;
+    const rows = await options.api.getPublishedCurriculum();
+    const metadata = metadataForHub(rows);
+    if (!metadata) return null;
+    const cachedVersion = publicationVersion(cached);
+    const remoteVersion = publicationVersion(metadata);
+    if (!cachedVersion || !remoteVersion || cachedVersion !== remoteVersion) return null;
+    return publishedFromCache(cached);
   }
   async function fallback(reason, packageVersion) {
     const loadBundled = options.loadBundled;
@@ -3210,7 +3404,7 @@ function createPublishedCurriculumService(options = {}) {
           mapPublication(cached),
           reason
         );
-        return { source: "cache", package: cached.package, state: setState(state2), publication: state2.publication };
+        return remember({ source: "cache", package: cached.package, state: setState(state2), publication: state2.publication });
       }
       const empty = setState(publicationResult(
         reason === "incompatible" ? "INCOMPATIBLE" : reason === "invalid-package" ? "ERROR" : "NO_PUBLICATION",
@@ -3218,7 +3412,7 @@ function createPublishedCurriculumService(options = {}) {
         null,
         reason
       ));
-      return { source: "none", package: null, state: empty, publication: null };
+      return remember({ source: "none", package: null, state: empty, publication: null });
     }
     const pkg = await loadBundled();
     const validation = validator.validate(pkg);
@@ -3231,7 +3425,7 @@ function createPublishedCurriculumService(options = {}) {
           mapPublication(cached),
           reason
         );
-        return { source: "cache", package: cached.package, state: setState(state2), publication: state2.publication };
+        return remember({ source: "cache", package: cached.package, state: setState(state2), publication: state2.publication });
       }
       throw new Error("bundled-package-invalid");
     }
@@ -3241,24 +3435,42 @@ function createPublishedCurriculumService(options = {}) {
       null,
       reason
     );
-    return { source: "bundled", package: pkg, state: setState(state), publication: null };
+    return remember({ source: "bundled", package: pkg, state: setState(state), publication: null });
   }
-  async function load(packageVersion) {
+  async function fetchLivePackage(packageVersion) {
+    const row = await resolver.fetchPublishedPackage(hubCode, courseKey, packageVersion || void 0);
+    const pkg = resolver.hydrate(row);
+    if (!validator.validate(pkg).valid) return fallback("invalid-package", packageVersion);
+    const schema = schemaLoader.inspect(row, pkg);
+    if (!schema.compatible) return fallback("incompatible", packageVersion);
+    cache.write(hubCode, courseKey, row, pkg, packageVersion || "latest");
+    const state = publicationResult(
+      "PUBLISHED",
+      localContext(pkg, hubCode, courseKey, schemaLoader.supportedSchemaVersion, schemaLoader.supportedPackageVersion),
+      mapPublication(row)
+    );
+    return remember({
+      source: "published",
+      package: pkg,
+      state: setState(state),
+      publication: state.publication
+    });
+  }
+  async function load(packageVersion, { revalidate = false } = {}) {
+    if (!revalidate && !packageVersion && loaded?.package && loaded.state?.state === "PUBLISHED") {
+      return loaded;
+    }
+    const cached = cache.read(hubCode, courseKey, packageVersion || "latest");
+    if (!packageVersion && cached?.package && validator.validate(cached.package).valid) {
+      try {
+        const confirmed = await matchingCachedPublication(cached);
+        if (confirmed) return confirmed;
+      } catch {
+      }
+    }
     try {
-      const row = await resolver.fetchPublishedPackage(hubCode, courseKey, packageVersion || void 0);
-      const pkg = resolver.hydrate(row);
-      if (!validator.validate(pkg).valid) return fallback("invalid-package", packageVersion);
-      const schema = schemaLoader.inspect(row, pkg);
-      if (!schema.compatible) return fallback("incompatible", packageVersion);
-      cache.write(hubCode, courseKey, row, pkg, packageVersion || "latest");
-      const state = publicationResult(
-        "PUBLISHED",
-        localContext(pkg, hubCode, courseKey, schemaLoader.supportedSchemaVersion, schemaLoader.supportedPackageVersion),
-        mapPublication(row)
-      );
-      return { source: "published", package: pkg, state: setState(state), publication: state.publication };
+      return await fetchLivePackage(packageVersion);
     } catch {
-      const cached = cache.read(hubCode, courseKey, packageVersion || "latest");
       if (cached?.package && validator.validate(cached.package).valid) {
         const state = publicationResult(
           "FALLBACK",
@@ -3266,18 +3478,33 @@ function createPublishedCurriculumService(options = {}) {
           mapPublication(cached),
           "unavailable"
         );
-        return { source: "cache", package: cached.package, state: setState(state), publication: state.publication };
+        return remember({
+          source: "cache",
+          package: cached.package,
+          state: setState(state),
+          publication: state.publication
+        });
       }
-      return fallback("unavailable", packageVersion);
+      return remember(await fallback("unavailable", packageVersion));
     }
+  }
+  function loadLatest() {
+    if (inflight) return inflight;
+    inflight = load(void 0).finally(() => {
+      inflight = null;
+    });
+    return inflight;
   }
   return Object.freeze({
     hubCode,
     courseKey,
-    loadLatest: () => load(void 0),
+    loadLatest,
     loadVersion: (version) => load(version),
-    refresh: () => load(void 0),
-    invalidate: () => cache.invalidate(hubCode, courseKey),
+    refresh: () => load(void 0, { revalidate: true }),
+    invalidate: () => {
+      loaded = null;
+      cache.invalidate(hubCode, courseKey);
+    },
     getPublicationMetadata: () => current?.publication || null,
     getState: () => current,
     renderStatus: (state) => renderPublicationStatus(state || current),
@@ -3372,6 +3599,7 @@ function createPlatform(options = {}, dependencies = {}) {
     if (authState.status === "signed-out") {
       hubEnrolmentContextSynced = false;
       onboarding.clearPending();
+      assignments.clearHubAssignmentCache();
       void activityStateSync.reset();
       state.transition("signed-out");
     }
@@ -3621,8 +3849,8 @@ function setAuthoredHtml(element, html) {
 }
 
 // src/ui/dom.js
-function createElement(document, tag, options = {}, children = []) {
-  const element = document.createElement(tag);
+function createElement(document2, tag, options = {}, children = []) {
+  const element = document2.createElement(tag);
   Object.entries(options).forEach(([key, value]) => {
     if (value == null || value === false) return;
     if (key === "className") element.className = value;
@@ -3636,23 +3864,23 @@ function createElement(document, tag, options = {}, children = []) {
   list.filter(Boolean).forEach((child) => element.append(child));
   return element;
 }
-function labelledValue(document, label, value) {
-  const wrapper = createElement(document, "div");
+function labelledValue(document2, label, value) {
+  const wrapper = createElement(document2, "div");
   wrapper.append(
-    createElement(document, "dt", { text: label }),
-    createElement(document, "dd", { text: value })
+    createElement(document2, "dt", { text: label }),
+    createElement(document2, "dd", { text: value })
   );
   return wrapper;
 }
-function formField(document, { id, label, type = "text", name = id, autocomplete, required = true, hint } = {}) {
-  const wrapper = createElement(document, "div", { className: "lp-form__field" });
-  const labelElement = createElement(document, "label", { htmlFor: id, text: label });
-  const input = createElement(document, "input", { id, name, type, autocomplete, required });
+function formField(document2, { id, label, type = "text", name = id, autocomplete, required = true, hint } = {}) {
+  const wrapper = createElement(document2, "div", { className: "lp-form__field" });
+  const labelElement = createElement(document2, "label", { htmlFor: id, text: label });
+  const input = createElement(document2, "input", { id, name, type, autocomplete, required });
   wrapper.append(labelElement);
   let hintElement = null;
   if (hint) {
     const hintId = `${id}-hint`;
-    hintElement = createElement(document, "p", { id: hintId, className: "lp-form__hint", text: hint });
+    hintElement = createElement(document2, "p", { id: hintId, className: "lp-form__hint", text: hint });
     input.setAttribute("aria-describedby", hintId);
     wrapper.append(hintElement);
   }
@@ -3661,8 +3889,8 @@ function formField(document, { id, label, type = "text", name = id, autocomplete
 }
 
 // src/ui/learner-header/learner-header.js
-function createLearnerHeader({ document = globalThis.document, learnerContext, authService, config } = {}) {
-  const element = createElement(document, "section", {
+function createLearnerHeader({ document: document2 = globalThis.document, learnerContext, authService, config } = {}) {
+  const element = createElement(document2, "section", {
     className: "lp-learner-header",
     "aria-label": "Learner account",
     hidden: true
@@ -3676,16 +3904,16 @@ function createLearnerHeader({ document = globalThis.document, learnerContext, a
       element.replaceChildren();
       return;
     }
-    const details = createElement(document, "dl", { className: "lp-learner-header__details" });
+    const details = createElement(document2, "dl", { className: "lp-learner-header__details" });
     details.append(
-      labelledValue(document, "Learner", lastContext.fullName || lastContext.displayName),
-      labelledValue(document, "Year group", lastContext.yearGroup || lastContext.academicYear || "Not set"),
-      labelledValue(document, "Email", lastContext.contactEmail || "Not set"),
-      labelledValue(document, "Current hub", config.hubName)
+      labelledValue(document2, "Learner", lastContext.fullName || lastContext.displayName),
+      labelledValue(document2, "Year group", lastContext.yearGroup || lastContext.academicYear || "Not set"),
+      labelledValue(document2, "Email", lastContext.contactEmail || "Not set"),
+      labelledValue(document2, "Current hub", config.hubName)
     );
-    const actions = createElement(document, "div", { className: "lp-learner-header__actions" });
-    const account = createElement(document, "a", { href: config.accountPath, text: "Account" });
-    const signOut = createElement(document, "button", { className: "lp-button lp-button--secondary", type: "button", text: "Sign out" });
+    const actions = createElement(document2, "div", { className: "lp-learner-header__actions" });
+    const account = createElement(document2, "a", { href: config.accountPath, text: "Account" });
+    const signOut = createElement(document2, "button", { className: "lp-button lp-button--secondary", type: "button", text: "Sign out" });
     signOut.addEventListener("click", () => authService.signOut());
     actions.append(account, signOut);
     element.replaceChildren(details, actions);
@@ -3700,7 +3928,7 @@ function createLearnerHeader({ document = globalThis.document, learnerContext, a
 
 // src/ui/navigation/navigation-shell.js
 function createNavigationShell({
-  document = globalThis.document,
+  document: document2 = globalThis.document,
   config,
   currentId = "home",
   currentIds = [],
@@ -3709,25 +3937,25 @@ function createNavigationShell({
   brandTagline,
   actions = null
 } = {}) {
-  const nav = createElement(document, "nav", { className: "lp-navigation", "aria-label": "Main navigation" });
-  const bar = createElement(document, "div", { className: "lp-navigation__bar" });
+  const nav = createElement(document2, "nav", { className: "lp-navigation", "aria-label": "Main navigation" });
+  const bar = createElement(document2, "div", { className: "lp-navigation__bar" });
   const home = config.navigation.find((item2) => item2.id === "home" && item2.enabled);
-  const brand = createElement(document, "a", {
+  const brand = createElement(document2, "a", {
     className: "lp-navigation__brand",
     href: home?.path || "./"
   });
-  brand.append(createElement(document, "span", {
+  brand.append(createElement(document2, "span", {
     className: "lp-navigation__brand-title",
     text: brandTitle || config.hubName
   }));
   if (brandTagline) {
-    brand.append(createElement(document, "span", {
+    brand.append(createElement(document2, "span", {
       className: "lp-navigation__brand-tagline",
       text: brandTagline
     }));
   }
   const listId = `lp-navigation-list-${config.hubCode}`;
-  const toggle = createElement(document, "button", {
+  const toggle = createElement(document2, "button", {
     className: "lp-button lp-button--secondary lp-navigation__toggle",
     type: "button",
     text: "Menu",
@@ -3735,26 +3963,26 @@ function createNavigationShell({
     "aria-controls": listId,
     "aria-label": "Open main menu"
   });
-  const list = createElement(document, "ul", {
+  const list = createElement(document2, "ul", {
     className: "lp-navigation__list",
     id: listId,
     dataset: { open: "false" }
   });
   const current = new Set([currentId, ...currentIds].filter(Boolean));
   config.navigation.filter((item2) => item2.enabled).forEach((item2) => {
-    const link = createElement(document, "a", {
+    const link = createElement(document2, "a", {
       className: "lp-navigation__link",
       href: item2.path,
       text: item2.label,
       "aria-current": current.has(item2.id) ? "page" : null
     });
-    list.append(createElement(document, "li", {}, link));
+    list.append(createElement(document2, "li", {}, link));
   });
   bar.append(brand, toggle, list);
   if (themeService) {
-    const label = createElement(document, "label", { className: "lp-theme-control", text: "Theme" });
-    const select = createElement(document, "select", { "aria-label": "Theme preference" });
-    themeService.modes.forEach((mode) => select.append(createElement(document, "option", {
+    const label = createElement(document2, "label", { className: "lp-theme-control", text: "Theme" });
+    const select = createElement(document2, "select", { "aria-label": "Theme preference" });
+    themeService.modes.forEach((mode) => select.append(createElement(document2, "option", {
       value: mode,
       text: mode[0].toUpperCase() + mode.slice(1)
     })));
@@ -3799,21 +4027,21 @@ function createNavigationShell({
 
 // src/ui/modal/modal.js
 var FOCUSABLE = "button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])";
-function createModal({ document = globalThis.document, id = "lp-dialog", title = "Dialog" } = {}) {
-  const dialog = createElement(document, "dialog", {
+function createModal({ document: document2 = globalThis.document, id = "lp-dialog", title = "Dialog" } = {}) {
+  const dialog = createElement(document2, "dialog", {
     id,
     className: "lp-dialog",
     "aria-labelledby": `${id}-title`
   });
-  const header = createElement(document, "header", { className: "lp-dialog__header" });
-  const heading = createElement(document, "h2", { id: `${id}-title`, text: title });
-  const closeButton = createElement(document, "button", {
+  const header = createElement(document2, "header", { className: "lp-dialog__header" });
+  const heading = createElement(document2, "h2", { id: `${id}-title`, text: title });
+  const closeButton = createElement(document2, "button", {
     className: "lp-dialog__close",
     type: "button",
     text: "Close",
     "aria-label": `Close ${title}`
   });
-  const body = createElement(document, "div", { className: "lp-dialog__body" });
+  const body = createElement(document2, "div", { className: "lp-dialog__body" });
   header.append(heading, closeButton);
   dialog.append(header, body);
   let returnFocus = null;
@@ -3822,7 +4050,7 @@ function createModal({ document = globalThis.document, id = "lp-dialog", title =
     else dialog.removeAttribute("open");
     returnFocus?.focus?.();
   }
-  function open(trigger = document.activeElement) {
+  function open(trigger = document2.activeElement) {
     returnFocus = trigger;
     if (typeof dialog.showModal === "function") dialog.showModal();
     else dialog.setAttribute("open", "");
@@ -3839,10 +4067,10 @@ function createModal({ document = globalThis.document, id = "lp-dialog", title =
     if (!controls.length) return;
     const first = controls[0];
     const last = controls.at(-1);
-    if (event.shiftKey && document.activeElement === first) {
+    if (event.shiftKey && document2.activeElement === first) {
       event.preventDefault();
       last.focus();
-    } else if (!event.shiftKey && document.activeElement === last) {
+    } else if (!event.shiftKey && document2.activeElement === last) {
       event.preventDefault();
       first.focus();
     }
@@ -3872,21 +4100,21 @@ function createModal({ document = globalThis.document, id = "lp-dialog", title =
 
 // src/ui/onboarding/onboarding-view.js
 function createOnboardingView({
-  document = globalThis.document,
+  document: document2 = globalThis.document,
   onboardingService,
   onComplete = () => {
   }
 } = {}) {
-  const element = createElement(document, "section", { "aria-labelledby": "lp-onboarding-title" });
-  const heading = createElement(document, "h3", { id: "lp-onboarding-title", text: "Finish setting up your learner account" });
-  const intro = createElement(document, "p", { text: "Enter your learner details to finish setting up your account." });
-  const form = createElement(document, "form", { className: "lp-form" });
-  const firstName = formField(document, { id: "lp-onboarding-first-name", label: "First name", autocomplete: "given-name" });
-  const surname = formField(document, { id: "lp-onboarding-surname", label: "Surname", autocomplete: "family-name" });
-  const studentNumber = formField(document, { id: "lp-onboarding-student-number", label: "Student ID", autocomplete: "off" });
-  const status = createElement(document, "p", { role: "status", "aria-live": "polite", tabIndex: -1 });
-  const submit = createElement(document, "button", { className: "lp-button", type: "submit", text: "Complete setup" });
-  const actions = createElement(document, "div", { className: "lp-form__actions" }, submit);
+  const element = createElement(document2, "section", { "aria-labelledby": "lp-onboarding-title" });
+  const heading = createElement(document2, "h3", { id: "lp-onboarding-title", text: "Finish setting up your learner account" });
+  const intro = createElement(document2, "p", { text: "Enter your learner details to finish setting up your account." });
+  const form = createElement(document2, "form", { className: "lp-form" });
+  const firstName = formField(document2, { id: "lp-onboarding-first-name", label: "First name", autocomplete: "given-name" });
+  const surname = formField(document2, { id: "lp-onboarding-surname", label: "Surname", autocomplete: "family-name" });
+  const studentNumber = formField(document2, { id: "lp-onboarding-student-number", label: "Student ID", autocomplete: "off" });
+  const status = createElement(document2, "p", { role: "status", "aria-live": "polite", tabIndex: -1 });
+  const submit = createElement(document2, "button", { className: "lp-button", type: "submit", text: "Complete setup" });
+  const actions = createElement(document2, "div", { className: "lp-form__actions" }, submit);
   form.append(firstName.wrapper, surname.wrapper, studentNumber.wrapper, status, actions);
   element.append(heading, intro, form);
   const pending = onboardingService.getPending();
@@ -3930,41 +4158,41 @@ var STUDENT_ID_HINT = "Use your college Student ID.";
 var NEW_LEARNER_GUIDANCE = "New here? Create an account first.";
 var SIGNUP_STATUS = "If this is a new account, check your email to confirm it. If you already created an account on another learning hub, sign in using the same email and password.";
 function createAccountDialog({
-  document = globalThis.document,
+  document: document2 = globalThis.document,
   authService,
   learnerContext,
   onboardingService
 } = {}) {
-  const modal = createModal({ document, id: "lp-account-dialog", title: "Learner account" });
+  const modal = createModal({ document: document2, id: "lp-account-dialog", title: "Learner account" });
   let mode = "sign-in";
   let onboardingView = null;
   function buildAuthView() {
-    const container = createElement(document, "div");
-    const tabs = createElement(document, "div", { className: "lp-auth-tabs", role: "tablist", "aria-label": "Account options" });
-    const signInTab = createElement(document, "button", { type: "button", role: "tab", text: "Sign in", "aria-selected": "true" });
-    const registerTab = createElement(document, "button", { type: "button", role: "tab", text: "Create account", "aria-selected": "false" });
+    const container = createElement(document2, "div");
+    const tabs = createElement(document2, "div", { className: "lp-auth-tabs", role: "tablist", "aria-label": "Account options" });
+    const signInTab = createElement(document2, "button", { type: "button", role: "tab", text: "Sign in", "aria-selected": "true" });
+    const registerTab = createElement(document2, "button", { type: "button", role: "tab", text: "Create account", "aria-selected": "false" });
     tabs.append(signInTab, registerTab);
-    const guidance = createElement(document, "p", { className: "lp-form__guidance", text: NEW_LEARNER_GUIDANCE });
-    const form = createElement(document, "form", { className: "lp-form", noValidate: true });
-    const firstName = formField(document, { id: "lp-register-first-name", label: "First name", autocomplete: "given-name" });
-    const surname = formField(document, { id: "lp-register-surname", label: "Last name", autocomplete: "family-name" });
-    const studentNumber = formField(document, {
+    const guidance = createElement(document2, "p", { className: "lp-form__guidance", text: NEW_LEARNER_GUIDANCE });
+    const form = createElement(document2, "form", { className: "lp-form", noValidate: true });
+    const firstName = formField(document2, { id: "lp-register-first-name", label: "First name", autocomplete: "given-name" });
+    const surname = formField(document2, { id: "lp-register-surname", label: "Last name", autocomplete: "family-name" });
+    const studentNumber = formField(document2, {
       id: "lp-register-student-number",
       label: "Student ID",
       autocomplete: "off",
       hint: STUDENT_ID_HINT
     });
-    const email = formField(document, {
+    const email = formField(document2, {
       id: "lp-account-email",
       label: "Email",
       type: "email",
       autocomplete: "email",
       hint: SIGN_IN_EMAIL_HINT
     });
-    const password = formField(document, { id: "lp-account-password", label: "Password", type: "password", autocomplete: "current-password" });
+    const password = formField(document2, { id: "lp-account-password", label: "Password", type: "password", autocomplete: "current-password" });
     password.input.minLength = 8;
-    const status = createElement(document, "p", { className: "lp-form__status", role: "status", "aria-live": "polite", tabIndex: -1 });
-    const submit = createElement(document, "button", { className: "lp-button", type: "submit", text: "Sign in" });
+    const status = createElement(document2, "p", { className: "lp-form__status", role: "status", "aria-live": "polite", tabIndex: -1 });
+    const submit = createElement(document2, "button", { className: "lp-button", type: "submit", text: "Sign in" });
     form.append(
       firstName.wrapper,
       surname.wrapper,
@@ -3972,7 +4200,7 @@ function createAccountDialog({
       email.wrapper,
       password.wrapper,
       status,
-      createElement(document, "div", { className: "lp-form__actions" }, submit)
+      createElement(document2, "div", { className: "lp-form__actions" }, submit)
     );
     container.append(tabs, guidance, form);
     function setRegisterField(field, registering) {
@@ -4072,7 +4300,7 @@ function createAccountDialog({
   function showOnboarding() {
     onboardingView?.destroy();
     onboardingView = createOnboardingView({
-      document,
+      document: document2,
       onboardingService,
       onComplete: () => modal.close()
     });
@@ -4100,15 +4328,15 @@ function createAccountDialog({
 }
 
 // src/ui/notifications/toast.js
-function createToastRegion({ document = globalThis.document, timeoutMs = 6e3 } = {}) {
-  const element = createElement(document, "div", {
+function createToastRegion({ document: document2 = globalThis.document, timeoutMs = 6e3 } = {}) {
+  const element = createElement(document2, "div", {
     className: "lp-toast-region",
     "aria-label": "Notifications",
     "aria-live": "polite",
     "aria-relevant": "additions"
   });
   function notify(message, { type = "info", persistent = false } = {}) {
-    const toast = createElement(document, "div", {
+    const toast = createElement(document2, "div", {
       className: `lp-toast lp-toast--${type}`,
       role: type === "error" ? "alert" : "status",
       text: String(message)
@@ -4121,49 +4349,49 @@ function createToastRegion({ document = globalThis.document, timeoutMs = 6e3 } =
 }
 
 // src/ui/loading/loading-state.js
-function createLoadingState({ document = globalThis.document, message = "Loading\u2026" } = {}) {
-  const element = createElement(document, "div", {
+function createLoadingState({ document: document2 = globalThis.document, message = "Loading\u2026" } = {}) {
+  const element = createElement(document2, "div", {
     className: "lp-loading",
     role: "status",
     "aria-live": "polite"
   });
   element.append(
-    createElement(document, "span", { className: "lp-loading__spinner", "aria-hidden": "true" }),
-    createElement(document, "span", { text: message })
+    createElement(document2, "span", { className: "lp-loading__spinner", "aria-hidden": "true" }),
+    createElement(document2, "span", { text: message })
   );
   return element;
 }
 
 // src/ui/errors/error-banner.js
-function createErrorBanner({ document = globalThis.document, heading = "There is a problem", message = "Try again." } = {}) {
-  const element = createElement(document, "section", {
+function createErrorBanner({ document: document2 = globalThis.document, heading = "There is a problem", message = "Try again." } = {}) {
+  const element = createElement(document2, "section", {
     className: "lp-error-banner",
     role: "alert",
     tabIndex: -1
   });
   element.append(
-    createElement(document, "h2", { text: heading }),
-    createElement(document, "p", { text: message })
+    createElement(document2, "h2", { text: heading }),
+    createElement(document2, "p", { text: message })
   );
   return element;
 }
 
 // src/ui/progress-card/progress-card.js
-function createProgressCard({ document = globalThis.document, title, completed = 0, total = 0, description = "" } = {}) {
+function createProgressCard({ document: document2 = globalThis.document, title, completed = 0, total = 0, description = "" } = {}) {
   const safeTotal = Math.max(0, Number(total) || 0);
   const safeCompleted = Math.min(safeTotal, Math.max(0, Number(completed) || 0));
   const percentage = safeTotal ? Math.round(safeCompleted / safeTotal * 100) : 0;
-  const element = createElement(document, "article", { className: "lp-card lp-progress-card" });
-  element.append(createElement(document, "h2", { text: title || "Progress" }));
-  if (description) element.append(createElement(document, "p", { className: "lp-card__meta", text: description }));
+  const element = createElement(document2, "article", { className: "lp-card lp-progress-card" });
+  element.append(createElement(document2, "h2", { text: title || "Progress" }));
+  if (description) element.append(createElement(document2, "p", { className: "lp-card__meta", text: description }));
   element.append(
-    createElement(document, "progress", {
+    createElement(document2, "progress", {
       className: "lp-progress",
       max: safeTotal || 1,
       value: safeCompleted,
       "aria-label": `${percentage}% complete`
     }),
-    createElement(document, "p", { text: `${safeCompleted} of ${safeTotal} complete (${percentage}%)` })
+    createElement(document2, "p", { text: `${safeCompleted} of ${safeTotal} complete (${percentage}%)` })
   );
   return element;
 }
@@ -4198,21 +4426,21 @@ function statusLabel(status, fallback = "") {
   return LABEL_BY_STATUS[status] || fallback || String(status || "Planned");
 }
 function createStatusBadge({
-  document = globalThis.document,
+  document: document2 = globalThis.document,
   status = "planned",
   label,
   marker = true
 } = {}) {
   const tone = statusTone(status);
-  const element = createElement(document, "span", {
+  const element = createElement(document2, "span", {
     className: `lp-status-badge lp-status-badge--${tone}`,
     role: "status"
   });
   if (marker) {
-    element.append(createElement(document, "span", { "aria-hidden": "true", text: "\u25CF" }));
-    element.append(document.createTextNode(" "));
+    element.append(createElement(document2, "span", { "aria-hidden": "true", text: "\u25CF" }));
+    element.append(document2.createTextNode(" "));
   }
-  element.append(document.createTextNode(label || statusLabel(status)));
+  element.append(document2.createTextNode(label || statusLabel(status)));
   return element;
 }
 
@@ -4224,7 +4452,7 @@ function actionLabelFor(state, fallback = "Open activity") {
   return fallback;
 }
 function createActivityCard({
-  document = globalThis.document,
+  document: document2 = globalThis.document,
   title,
   description = "",
   activityType = "Activity",
@@ -4237,53 +4465,53 @@ function createActivityCard({
   badgeStatus,
   headingLevel = 2
 } = {}) {
-  const element = createElement(document, "article", { className: "lp-card lp-activity-card" });
+  const element = createElement(document2, "article", { className: "lp-card lp-activity-card" });
   if (state) element.dataset.state = state;
   const headingTag = headingLevel === 3 ? "h3" : "h2";
   const metaParts = [activityType, duration].filter(Boolean);
   if (badge) {
     element.append(createStatusBadge({
-      document,
+      document: document2,
       status: badgeStatus || state || "planned",
       label: typeof status === "string" && status !== "Not started" ? status : void 0
     }));
   }
   if (metaParts.length) {
-    element.append(createElement(document, "p", { className: "lp-card__meta", text: metaParts.join(" \xB7 ") }));
+    element.append(createElement(document2, "p", { className: "lp-card__meta", text: metaParts.join(" \xB7 ") }));
   }
-  element.append(createElement(document, headingTag, { text: title || "Untitled activity" }));
-  if (description) element.append(createElement(document, "p", { text: description }));
+  element.append(createElement(document2, headingTag, { text: title || "Untitled activity" }));
+  if (description) element.append(createElement(document2, "p", { text: description }));
   const readableStatus = state ? statusLabel(state, status) : status;
-  element.append(createElement(document, "p", { className: "lp-card__meta", text: `Status: ${readableStatus}` }));
+  element.append(createElement(document2, "p", { className: "lp-card__meta", text: `Status: ${readableStatus}` }));
   if (href) {
-    const actions = createElement(document, "div", { className: "lp-card__actions" });
+    const actions = createElement(document2, "div", { className: "lp-card__actions" });
     const label = actionLabel || actionLabelFor(state);
-    actions.append(createElement(document, "a", { className: "lp-button", href, text: label }));
+    actions.append(createElement(document2, "a", { className: "lp-button", href, text: label }));
     element.append(actions);
   }
   return element;
 }
 
 // src/ui/empty-state/empty-state.js
-function createEmptyState({ document = globalThis.document, heading = "Nothing to show yet", message = "Check again later.", action } = {}) {
-  const element = createElement(document, "section", { className: "lp-empty-state" });
+function createEmptyState({ document: document2 = globalThis.document, heading = "Nothing to show yet", message = "Check again later.", action } = {}) {
+  const element = createElement(document2, "section", { className: "lp-empty-state" });
   element.append(
-    createElement(document, "h2", { text: heading }),
-    createElement(document, "p", { text: message })
+    createElement(document2, "h2", { text: heading }),
+    createElement(document2, "p", { text: message })
   );
   if (action?.label && action?.href) {
-    element.append(createElement(document, "a", { className: "lp-button", href: action.href, text: action.label }));
+    element.append(createElement(document2, "a", { className: "lp-button", href: action.href, text: action.label }));
   }
   return element;
 }
 
 // src/ui/breadcrumbs/breadcrumbs.js
 function createBreadcrumbs({
-  document = globalThis.document,
+  document: document2 = globalThis.document,
   items = [],
   resolveHref
 } = {}) {
-  const nav = createElement(document, "nav", {
+  const nav = createElement(document2, "nav", {
     className: "lp-breadcrumbs",
     "aria-label": "Breadcrumb"
   });
@@ -4291,15 +4519,15 @@ function createBreadcrumbs({
     nav.hidden = true;
     return nav;
   }
-  const list = createElement(document, "ol", { className: "lp-breadcrumbs__list" });
+  const list = createElement(document2, "ol", { className: "lp-breadcrumbs__list" });
   items.forEach((item2, index) => {
     const last = index === items.length - 1;
-    const li = createElement(document, "li");
+    const li = createElement(document2, "li");
     const href = item2.href || (item2.path != null && item2.path !== "" && resolveHref ? resolveHref(item2.path) : item2.path);
     if (last || !href) {
-      li.append(createElement(document, "span", { text: item2.label || "", "aria-current": "page" }));
+      li.append(createElement(document2, "span", { text: item2.label || "", "aria-current": "page" }));
     } else {
-      li.append(createElement(document, "a", { href, text: item2.label || "" }));
+      li.append(createElement(document2, "a", { href, text: item2.label || "" }));
     }
     list.append(li);
   });
@@ -4309,7 +4537,7 @@ function createBreadcrumbs({
 
 // src/ui/hub-shell/hub-shell.js
 function createHubShell({
-  document = globalThis.document,
+  document: document2 = globalThis.document,
   config,
   currentId = "home",
   currentIds = [],
@@ -4326,18 +4554,18 @@ function createHubShell({
   learnerContext,
   authService
 } = {}) {
-  const shell = createElement(document, "div", { className: "lp-shell" });
-  const skip = createElement(document, "a", {
+  const shell = createElement(document2, "div", { className: "lp-shell" });
+  const skip = createElement(document2, "a", {
     className: "lp-skip-link",
     href: `#${mainId}`,
     text: skipLabel
   });
-  const banner = createElement(document, "header", {
+  const banner = createElement(document2, "header", {
     className: "lp-shell__banner",
     role: "banner"
   });
   const navigation = createNavigationShell({
-    document,
+    document: document2,
     config,
     currentId,
     currentIds,
@@ -4347,30 +4575,30 @@ function createHubShell({
     actions
   });
   banner.append(navigation.element);
-  const headerController = learnerHeader || (learnerContext && authService ? createLearnerHeader({ document, learnerContext, authService, config }) : null);
-  const learnerMount = createElement(document, "div", { className: "lp-shell__learner" });
+  const headerController = learnerHeader || (learnerContext && authService ? createLearnerHeader({ document: document2, learnerContext, authService, config }) : null);
+  const learnerMount = createElement(document2, "div", { className: "lp-shell__learner" });
   if (headerController?.element) learnerMount.append(headerController.element);
-  const crumbNode = breadcrumbs?.element || (Array.isArray(breadcrumbs?.items) ? createBreadcrumbs({ document, items: breadcrumbs.items, resolveHref: breadcrumbs.resolveHref }) : breadcrumbs) || null;
+  const crumbNode = breadcrumbs?.element || (Array.isArray(breadcrumbs?.items) ? createBreadcrumbs({ document: document2, items: breadcrumbs.items, resolveHref: breadcrumbs.resolveHref }) : breadcrumbs) || null;
   let intro = null;
   if (pageHeader?.title) {
-    intro = createElement(document, "header", { className: "lp-page-header" });
-    intro.append(createElement(document, "h1", { text: pageHeader.title }));
+    intro = createElement(document2, "header", { className: "lp-page-header" });
+    intro.append(createElement(document2, "h1", { text: pageHeader.title }));
     if (pageHeader.subtitle) {
-      intro.append(createElement(document, "p", { className: "lp-page-header__subtitle", text: pageHeader.subtitle }));
+      intro.append(createElement(document2, "p", { className: "lp-page-header__subtitle", text: pageHeader.subtitle }));
     }
   }
-  const main = createElement(document, "main", {
+  const main = createElement(document2, "main", {
     className: "lp-shell__main",
     id: mainId,
     tabIndex: -1
   });
-  const footerEl = createElement(document, "footer", {
+  const footerEl = createElement(document2, "footer", {
     className: "lp-shell__footer",
     role: "contentinfo"
   });
   if (footer?.element) footerEl.append(footer.element);
   else if (Array.isArray(footer?.lines)) {
-    footer.lines.forEach((line) => footerEl.append(createElement(document, "p", { text: line })));
+    footer.lines.forEach((line) => footerEl.append(createElement(document2, "p", { text: line })));
   }
   shell.append(skip, banner, learnerMount);
   if (crumbNode) shell.append(crumbNode);
@@ -4392,24 +4620,24 @@ function createHubShell({
 // src/ui/callout/callout.js
 var TONES = Object.freeze(["info", "success", "warning", "error"]);
 function createCallout({
-  document = globalThis.document,
+  document: document2 = globalThis.document,
   tone = "info",
   title,
   message
 } = {}) {
   const resolved = TONES.includes(tone) ? tone : "info";
-  const element = createElement(document, "aside", {
+  const element = createElement(document2, "aside", {
     className: `lp-callout lp-callout--${resolved}`,
     role: resolved === "error" ? "alert" : null
   });
-  if (title) element.append(createElement(document, "strong", { text: title }));
-  if (message) element.append(createElement(document, "p", { text: message }));
+  if (title) element.append(createElement(document2, "strong", { text: title }));
+  if (message) element.append(createElement(document2, "p", { text: message }));
   return element;
 }
 
 // src/ui/context-panel/context-panel.js
 function createContextPanel({
-  document = globalThis.document,
+  document: document2 = globalThis.document,
   contextType = "assignment",
   heading = "Context",
   items = [],
@@ -4418,21 +4646,21 @@ function createContextPanel({
 } = {}) {
   const type = CONTEXT_TYPES.includes(contextType) ? contextType : "assignment";
   const headingId = `lp-context-${type}`;
-  const element = createElement(document, "section", {
+  const element = createElement(document2, "section", {
     className: `lp-context-panel lp-panel lp-context-panel--${type}`,
     "aria-labelledby": headingId,
     dataset: { contextType: type }
   });
-  element.append(createElement(document, "h2", { id: headingId, text: heading }));
+  element.append(createElement(document2, "h2", { id: headingId, text: heading }));
   if (items.length) {
-    const list = createElement(document, "dl", { className: "lp-meta-list" });
-    items.forEach((item2) => list.append(labelledValue(document, item2.label, item2.value)));
+    const list = createElement(document2, "dl", { className: "lp-meta-list" });
+    items.forEach((item2) => list.append(labelledValue(document2, item2.label, item2.value)));
     element.append(list);
   }
-  if (description) element.append(createElement(document, "p", { text: description }));
+  if (description) element.append(createElement(document2, "p", { text: description }));
   if (action?.label && action?.href) {
-    const paragraph = createElement(document, "p");
-    paragraph.append(createElement(document, "a", {
+    const paragraph = createElement(document2, "p");
+    paragraph.append(createElement(document2, "a", {
       className: "lp-text-link",
       href: action.href,
       text: action.label
@@ -4444,12 +4672,12 @@ function createContextPanel({
 
 // src/ui/learning-outcome-badge/learning-outcome-badge.js
 function createLearningOutcomeBadge({
-  document = globalThis.document,
+  document: document2 = globalThis.document,
   id,
   title
 } = {}) {
   const label = [id, title].filter(Boolean).join(" ");
-  return createElement(document, "span", {
+  return createElement(document2, "span", {
     className: "lp-outcome-badge",
     text: label || "Learning outcome"
   });
@@ -4457,7 +4685,7 @@ function createLearningOutcomeBadge({
 
 // src/ui/week-header/week-header.js
 function createWeekHeader({
-  document = globalThis.document,
+  document: document2 = globalThis.document,
   teachingWeek,
   title = "",
   subtitle = "",
@@ -4466,27 +4694,27 @@ function createWeekHeader({
   headingLevel = 1,
   showTitle = true
 } = {}) {
-  const element = createElement(document, "header", { className: "lp-week-header" });
-  if (status) element.append(createStatusBadge({ document, status }));
+  const element = createElement(document2, "header", { className: "lp-week-header" });
+  if (status) element.append(createStatusBadge({ document: document2, status }));
   if (showTitle) {
     const headingText = teachingWeek ? `Week ${teachingWeek}${title ? `: ${title}` : ""}` : title || "Week";
     const level = headingLevel === 2 ? "h2" : "h1";
-    element.append(createElement(document, level, { text: headingText }));
+    element.append(createElement(document2, level, { text: headingText }));
   } else if (teachingWeek) {
-    element.append(createElement(document, "p", {
+    element.append(createElement(document2, "p", {
       className: "lp-week-header__kicker",
       text: `Teaching week ${teachingWeek}`
     }));
   }
   if (subtitle) {
-    element.append(createElement(document, "p", { className: "lp-week-header__subtitle", text: subtitle }));
+    element.append(createElement(document2, "p", { className: "lp-week-header__subtitle", text: subtitle }));
   }
   if (learningOutcomes.length) {
-    const list = createElement(document, "ul", { className: "lp-week-header__outcomes" });
+    const list = createElement(document2, "ul", { className: "lp-week-header__outcomes" });
     learningOutcomes.forEach((outcome) => {
-      const item2 = createElement(document, "li");
+      const item2 = createElement(document2, "li");
       item2.append(createLearningOutcomeBadge({
-        document,
+        document: document2,
         id: outcome.id,
         title: outcome.title
       }));
@@ -4499,19 +4727,19 @@ function createWeekHeader({
 
 // src/ui/week-navigation/week-navigation.js
 function createWeekNavigation({
-  document = globalThis.document,
+  document: document2 = globalThis.document,
   previousWeek,
   nextWeek
 } = {}) {
   if (!previousWeek?.href && !nextWeek?.href) return null;
-  const nav = createElement(document, "nav", {
+  const nav = createElement(document2, "nav", {
     className: "lp-week-nav",
     "aria-label": "Week"
   });
-  const list = createElement(document, "ul", { className: "lp-week-nav__list" });
+  const list = createElement(document2, "ul", { className: "lp-week-nav__list" });
   if (previousWeek?.href) {
-    list.append(createElement(document, "li", {}, [
-      createElement(document, "a", {
+    list.append(createElement(document2, "li", {}, [
+      createElement(document2, "a", {
         className: "lp-text-link",
         href: previousWeek.href,
         text: previousWeek.label || "Previous week",
@@ -4520,8 +4748,8 @@ function createWeekNavigation({
     ]));
   }
   if (nextWeek?.href) {
-    list.append(createElement(document, "li", {}, [
-      createElement(document, "a", {
+    list.append(createElement(document2, "li", {}, [
+      createElement(document2, "a", {
         className: "lp-text-link",
         href: nextWeek.href,
         text: nextWeek.label || "Next week",
@@ -4535,7 +4763,7 @@ function createWeekNavigation({
 
 // src/ui/session-section/session-section.js
 function createSessionSection({
-  document = globalThis.document,
+  document: document2 = globalThis.document,
   id,
   title,
   kind = "session",
@@ -4545,23 +4773,23 @@ function createSessionSection({
   children = []
 } = {}) {
   const resolvedKind = SESSION_KINDS.includes(kind) ? kind : "session";
-  const details = createElement(document, "details", {
+  const details = createElement(document2, "details", {
     className: "lp-session lp-panel",
     id,
     dataset: { kind: resolvedKind }
   });
   details.open = Boolean(defaultOpen);
   const kindLabel = SESSION_KIND_LABELS[resolvedKind];
-  const summaryEl = createElement(document, "summary", { className: "lp-session__summary" });
-  const text = createElement(document, "span", { className: "lp-session__text" });
+  const summaryEl = createElement(document2, "summary", { className: "lp-session__summary" });
+  const text = createElement(document2, "span", { className: "lp-session__text" });
   text.append(
-    createElement(document, "h2", { className: "lp-session__heading", text: title || kindLabel }),
-    createElement(document, "span", { className: "lp-session__meta", text: meta || kindLabel })
+    createElement(document2, "h2", { className: "lp-session__heading", text: title || kindLabel }),
+    createElement(document2, "span", { className: "lp-session__meta", text: meta || kindLabel })
   );
   summaryEl.append(text);
-  const content = createElement(document, "div", { className: "lp-session__content" });
-  if (summary) content.append(createElement(document, "p", { className: "lp-panel-note", text: summary }));
-  const list = createElement(document, "div", { className: "lp-activity-list" });
+  const content = createElement(document2, "div", { className: "lp-session__content" });
+  if (summary) content.append(createElement(document2, "p", { className: "lp-panel-note", text: summary }));
+  const list = createElement(document2, "div", { className: "lp-activity-list" });
   (Array.isArray(children) ? children : [children]).filter(Boolean).forEach((child) => list.append(child));
   content.append(list);
   details.append(summaryEl, content);
@@ -4569,10 +4797,10 @@ function createSessionSection({
 }
 
 // src/ui/week-view/week-view.js
-function activityNode(document, activity, renderActivity) {
+function activityNode(document2, activity, renderActivity) {
   if (activity?.element) return activity.element;
   if (typeof renderActivity === "function") return renderActivity(activity);
-  return createActivityCard({ document, ...activity });
+  return createActivityCard({ document: document2, ...activity });
 }
 function sessionMeta(session) {
   if (session.meta) return session.meta;
@@ -4582,7 +4810,7 @@ function sessionMeta(session) {
   return session.kind && session.kind !== "session" ? `${kindLabel} \xB7 ${countLabel}` : countLabel;
 }
 function createWeekView({
-  document = globalThis.document,
+  document: document2 = globalThis.document,
   week = {},
   learningOutcomes = [],
   context = null,
@@ -4594,12 +4822,12 @@ function createWeekView({
   renderActivity
 } = {}) {
   const ui = mergeWeekUiFeatures(features);
-  const element = createElement(document, "div", {
+  const element = createElement(document2, "div", {
     className: "lp-week",
     dataset: { week: week.id || "" }
   });
   element.append(createWeekHeader({
-    document,
+    document: document2,
     teachingWeek: week.teachingWeek,
     title: week.title,
     subtitle: week.subtitle,
@@ -4610,7 +4838,7 @@ function createWeekView({
   }));
   if (context && shouldShowContext(ui, context.type || context.contextType)) {
     element.append(createContextPanel({
-      document,
+      document: document2,
       contextType: context.type || context.contextType,
       heading: context.heading,
       items: context.items || [],
@@ -4625,16 +4853,16 @@ function createWeekView({
   });
   if (!visibleSessions.length) {
     element.append(createEmptyState({
-      document,
+      document: document2,
       heading: "Planned teaching week",
       message: week.emptyMessage || "Detailed session activities for this week have not been added yet.",
       action: week.emptyAction
     }));
   } else {
     visibleSessions.forEach((session) => {
-      const children = (session.activities || []).map((activity) => activityNode(document, activity, renderActivity));
+      const children = (session.activities || []).map((activity) => activityNode(document2, activity, renderActivity));
       element.append(createSessionSection({
-        document,
+        document: document2,
         id: session.id,
         title: session.title,
         kind: session.kind,
@@ -4646,9 +4874,9 @@ function createWeekView({
     });
   }
   if (ui.showProgress && progress) {
-    element.append(createProgressCard({ document, ...progress }));
+    element.append(createProgressCard({ document: document2, ...progress }));
   }
-  const navigation = createWeekNavigation({ document, previousWeek, nextWeek });
+  const navigation = createWeekNavigation({ document: document2, previousWeek, nextWeek });
   if (navigation) element.append(navigation);
   return element;
 }

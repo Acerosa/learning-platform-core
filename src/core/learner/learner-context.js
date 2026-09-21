@@ -34,6 +34,7 @@ function normaliseEnrolments(rows) {
 export function createLearnerContext({ authService, profileService, enrolmentService } = {}) {
   let state = Object.freeze({ status: "loading", context: null, error: null });
   let refreshPromise = null;
+  let lastAuthUserId = null;
   const listeners = new Set();
 
   function publish(next) {
@@ -83,8 +84,17 @@ export function createLearnerContext({ authService, profileService, enrolmentSer
   }
 
   authService.subscribe((authState) => {
-    if (authState.status === "authenticated") refresh().catch(() => {});
-    if (authState.status === "signed-out") publish({ status: "signed-out", context: null, error: null });
+    if (authState.status === "signed-out") {
+      lastAuthUserId = null;
+      publish({ status: "signed-out", context: null, error: null });
+      return;
+    }
+    if (authState.status === "authenticated") {
+      const userId = authState.session?.user?.id || null;
+      if (state.status === "authenticated" && lastAuthUserId && lastAuthUserId === userId) return;
+      lastAuthUserId = userId;
+      refresh().catch(() => {});
+    }
   });
 
   return Object.freeze({

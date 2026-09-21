@@ -1,8 +1,18 @@
 import { mapPlatformError, PlatformError } from "../errors/platform-error.js";
+import { recordPlatformRequest } from "../logging/request-counter.js";
 import { cleanAuthCallbackFromUrl } from "./auth-redirect-url.js";
 import { isRetryableAuthNetworkError, isStaleAuthSessionError } from "./stale-auth-session.js";
 
 const STALE_SESSION_COPY = "Your previous session is no longer valid. Please sign in again.";
+
+function sessionUserId(session) {
+  return session?.user?.id || null;
+}
+
+function sameAuthUser(left, right) {
+  const leftId = sessionUserId(left);
+  return Boolean(leftId) && leftId === sessionUserId(right);
+}
 
 function staleSessionError(cause) {
   return new PlatformError({
@@ -35,6 +45,34 @@ export function createAuthService({ client, logger, resolveRedirectUrl, cleanAut
     state = Object.freeze({ ...state, ...next });
     listeners.forEach((listener) => listener(state));
     return state;
+  }
+
+  function replaceSessionQuietly(session) {
+    state = Object.freeze({ ...state, status: "authenticated", session, error: null });
+    return state;
+  }
+
+  function refreshRealtimeAuth() {
+    if (typeof client.realtime?.setAuth !== "function") return;
+    recordPlatformRequest("realtime", "setAuth");
+    void client.realtime.setAuth().catch(() => {});
+  }
+
+  function applyAuthenticatedSession(session, { notify } = { notify: true }) {
+    if (!notify) {
+      replaceSessionQuietly(session);
+      refreshRealtimeAuth();
+      return state;
+    }
+    return publish({ status: "authenticated", session, error: null });
+  }
+
+  function shouldQuietlyRotateSession(event, session) {
+    if (state.status !== "authenticated" || !sameAuthUser(state.session, session)) return false;
+    return event === "TOKEN_REFRESHED"
+      || event === "INITIAL_SESSION"
+      || event === "SIGNED_IN"
+      || event === "USER_UPDATED";
   }
 
   function subscribe(listener) {
@@ -86,6 +124,7 @@ export function createAuthService({ client, logger, resolveRedirectUrl, cleanAut
     let result;
     try {
       result = await client.auth.getUser();
+      recordPlatformRequest("auth", "getUser");
     } catch (error) {
       if (isRetryableAuthNetworkError(error)) {
         return { ok: false, network: true, error };
@@ -131,9 +170,13 @@ export function createAuthService({ client, logger, resolveRedirectUrl, cleanAut
       if (event === "SIGNED_OUT" || !session) {
         const keepStale = state.error?.code === "AUTH_SESSION_STALE" ? state.error : null;
         publish({ status: "signed-out", session: null, error: keepStale });
-      } else {
-        publish({ status: "authenticated", session, error: null });
+        return;
       }
+      if (shouldQuietlyRotateSession(event, session)) {
+        applyAuthenticatedSession(session, { notify: false });
+        return;
+      }
+      applyAuthenticatedSession(session, { notify: true });
     });
     initialisePromise = (async () => {
       try {
@@ -191,6 +234,7 @@ export function createAuthService({ client, logger, resolveRedirectUrl, cleanAut
   async function signIn(email, password) {
     publish({ status: "signing-in", error: null });
     try {
+      recordPlatformRequest("auth", "signIn");
       const result = await client.auth.signInWithPassword({ email: String(email || "").trim(), password });
       if (result.error) throw result.error;
       staleRecoveryAttempted = false;
@@ -234,6 +278,7 @@ export function createAuthService({ client, logger, resolveRedirectUrl, cleanAut
 
   async function signOut() {
     try {
+      recordPlatformRequest("auth", "signOut");
       // Local scope clears only this client's persisted session. Global sign-out
       // would revoke every refresh token for the Auth user, including other hubs.
       const result = await client.auth.signOut({ scope: "local" });
@@ -254,6 +299,7 @@ export function createAuthService({ client, logger, resolveRedirectUrl, cleanAut
    */
   async function refreshSession() {
     try {
+      recordPlatformRequest("auth", "refreshSession");
       const result = await client.auth.refreshSession();
       if (result?.error) throw result.error;
       const session = result?.data?.session || null;
@@ -270,7 +316,8 @@ export function createAuthService({ client, logger, resolveRedirectUrl, cleanAut
         });
       }
       staleRecoveryAttempted = false;
-      return publish({ status: "authenticated", session, error: null });
+      const notify = state.status !== "authenticated" || !sameAuthUser(state.session, session);
+      return applyAuthenticatedSession(session, { notify });
     } catch (error) {
       if (error instanceof PlatformError && error.code === "SESSION_REFRESH_REQUIRED") throw error;
       if (isRetryableAuthNetworkError(error)) {

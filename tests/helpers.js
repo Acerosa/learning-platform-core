@@ -39,6 +39,16 @@ export function fakeSupabase({
   let authListener = null;
   const client = {
     calls,
+    emitAuthEvent(event, nextSession) {
+      if (nextSession) currentSession = nextSession;
+      else if (event === "SIGNED_OUT") currentSession = null;
+      authListener?.(event, nextSession);
+    },
+    realtime: {
+      async setAuth() {
+        calls.push({ type: "realtime-set-auth" });
+      }
+    },
     auth: {
       onAuthStateChange(listener) { authListener = listener; return { data: { subscription: { unsubscribe() {} } } }; },
       async getSession() { return { data: { session: currentSession }, error: authErrors.getSession || null }; },

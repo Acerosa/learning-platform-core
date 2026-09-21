@@ -53,7 +53,8 @@ function storeFor(api, extras = {}) {
     auth: extras.auth || signedInAuth(extras.userId),
     storage: extras.storage || memoryStorage(),
     activityKey: extras.activityKey || "week-1-activity",
-    activityVersion: extras.activityVersion || "1.0.0"
+    activityVersion: extras.activityVersion || "1.0.0",
+    debounceMs: extras.debounceMs
   });
 }
 
@@ -256,4 +257,43 @@ test("fingerprint ignores updatedAt so timestamp-only saves are unchanged", () =
     updatedAt: "2026-09-12T08:00:01.000Z"
   });
   assert.equal(first, second);
+});
+
+test("rapid typing coalesces to one remote save", async () => {
+  const api = countingApi();
+  const store = storeFor(api, { debounceMs: 40 });
+  for (let index = 1; index <= 50; index += 1) {
+    store.save({ responses: { Q1: `draft-${index}` } });
+  }
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  assert.equal(api.saves.length, 1);
+  assert.equal(api.saves[0].state.responses.Q1, "draft-50");
+  store.destroy();
+});
+
+test("document hidden flushes a pending debounced save", async () => {
+  const { JSDOM } = await import("jsdom");
+  const previousDocument = globalThis.document;
+  const dom = new JSDOM("<!doctype html><html></html>", { url: "https://example.test/" });
+  globalThis.document = dom.window.document;
+  const api = countingApi();
+  let store;
+  try {
+    store = storeFor(api, { debounceMs: 60_000 });
+    store.save({ responses: { Q1: "draft" } });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(api.saves.length, 0);
+    Object.defineProperty(dom.window.document, "visibilityState", {
+      configurable: true,
+      get() { return "hidden"; }
+    });
+    dom.window.document.dispatchEvent(new dom.window.Event("visibilitychange"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(api.saves.length, 1);
+    assert.equal(api.saves[0].state.responses.Q1, "draft");
+  } finally {
+    store?.destroy();
+    if (previousDocument === undefined) delete globalThis.document;
+    else globalThis.document = previousDocument;
+  }
 });

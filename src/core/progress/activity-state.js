@@ -734,12 +734,27 @@ export function createActivityStateStore({
       globalThis.removeEventListener("pagehide", onHide);
       globalThis.removeEventListener("beforeunload", onHide);
     }
+    if (visibilityNode && typeof visibilityNode.removeEventListener === "function") {
+      visibilityNode.removeEventListener("visibilitychange", onVisibility);
+    }
   }
 
   const onHide = () => { if (!destroyed) flush(); };
+  function documentIsHidden() {
+    return Boolean(visibilityNode && visibilityNode.visibilityState === "hidden");
+  }
+  function onVisibility() {
+    if (!destroyed && documentIsHidden()) flush();
+  }
+  const visibilityNode = (typeof document !== "undefined" && document && typeof document.addEventListener === "function")
+    ? document
+    : null;
   if (typeof globalThis.addEventListener === "function") {
     globalThis.addEventListener("pagehide", onHide);
     globalThis.addEventListener("beforeunload", onHide);
+  }
+  if (visibilityNode) {
+    visibilityNode.addEventListener("visibilitychange", onVisibility);
   }
 
   return Object.freeze({

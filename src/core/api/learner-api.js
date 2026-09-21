@@ -1,4 +1,5 @@
 import { mapPlatformError, PlatformError } from "../errors/platform-error.js";
+import { recordPlatformRequest } from "../logging/request-counter.js";
 
 function unwrap(result, operation) {
   if (result?.error) throw mapPlatformError(result.error, { operation });
@@ -21,6 +22,7 @@ export function createLearnerApi({ client, schema = "api", logger } = {}) {
 
   async function read(view, { select = "*", order, ascending = true, filters = [] } = {}) {
     try {
+      recordPlatformRequest("read", view);
       let query = api.from(view).select(select);
       filters.forEach(({ column, value }) => {
         if (value !== undefined && value !== null && value !== "") query = query.eq(column, value);
@@ -35,6 +37,7 @@ export function createLearnerApi({ client, schema = "api", logger } = {}) {
 
   async function rpc(name, payload = {}) {
     try {
+      recordPlatformRequest("rpc", name);
       return unwrap(await api.rpc(name, payload), `rpc:${name}`);
     } catch (error) {
       logger?.warn("api.rpc.failed", { rpc: name, code: error?.code });

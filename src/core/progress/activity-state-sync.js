@@ -7,6 +7,7 @@ import {
   learnerCacheKey,
   resetActivityStateDedupe
 } from "./activity-state.js";
+import { recordPlatformRequest } from "../logging/request-counter.js";
 
 function userIdFromAuth(auth) {
   try {
@@ -81,19 +82,26 @@ export function createActivityStateSync({
     if (!userId || typeof client?.channel !== "function") return;
     if (channel && currentUserId === userId) {
       if (typeof client.realtime?.setAuth === "function") {
-        try { await client.realtime.setAuth(); } catch {}
+        try {
+          recordPlatformRequest("realtime", "setAuth");
+          await client.realtime.setAuth();
+        } catch {}
       }
       return;
     }
     await stop();
     currentUserId = userId;
     if (typeof client.realtime?.setAuth === "function") {
-      try { await client.realtime.setAuth(); } catch {}
+      try {
+        recordPlatformRequest("realtime", "setAuth");
+        await client.realtime.setAuth();
+      } catch {}
     }
     const topic = activityStateSyncTopic(userId);
     const next = client.channel(topic, { config: { private: true } });
     if (!next || typeof next.on !== "function" || typeof next.subscribe !== "function") return;
     channel = next;
+    recordPlatformRequest("realtime", "channel.subscribe");
     next.on("broadcast", { event: ACTIVITY_STATE_INVALIDATION_EVENT }, (message) => {
       handlePayload(message?.payload || message);
     });

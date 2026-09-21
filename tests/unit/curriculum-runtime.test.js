@@ -139,6 +139,155 @@ test("invalid publications and unsupported schemas fall back without mixing hubs
   assert.equal(unsupported.state.reason, "incompatible");
 });
 
+test("same-session loadLatest reuses the published package without another RPC", async () => {
+  const calls = [];
+  const service = createPublishedCurriculumService({
+    hubCode: "hub-alpha",
+    courseKey: "course-one",
+    storage: memoryStorage(),
+    api: {
+      getPublishedCurriculumPackage: async () => {
+        calls.push("package");
+        return [row("hub-alpha", "course-one")];
+      }
+    }
+  });
+  const first = await service.loadLatest();
+  const second = await service.loadLatest();
+  assert.equal(first.source, "published");
+  assert.equal(second.source, "published");
+  assert.equal(first.package, second.package);
+  assert.equal(calls.length, 1);
+});
+
+test("cached curriculum is reused when published_curriculum version is unchanged", async () => {
+  const storage = memoryStorage();
+  const calls = [];
+  const service = createPublishedCurriculumService({
+    hubCode: "hub-alpha",
+    courseKey: "course-one",
+    storage,
+    api: {
+      getPublishedCurriculum: async () => {
+        calls.push("metadata");
+        return [{
+          hub_code: "hub-alpha",
+          course_key: "course-one",
+          package_version: "0.2.0",
+          schema_version: "0.1.0",
+          source_package_version: "0.1.0",
+          published_at: "2026-08-17T12:00:00Z"
+        }];
+      },
+      getPublishedCurriculumPackage: async () => {
+        calls.push("package");
+        return [row("hub-alpha", "course-one")];
+      }
+    }
+  });
+  const first = await service.loadLatest();
+  assert.equal(first.source, "published");
+  assert.deepEqual(calls, ["package"]);
+  const second = createPublishedCurriculumService({
+    hubCode: "hub-alpha",
+    courseKey: "course-one",
+    storage,
+    api: {
+      getPublishedCurriculum: async () => {
+        calls.push("metadata");
+        return [{
+          hub_code: "hub-alpha",
+          course_key: "course-one",
+          package_version: "0.2.0",
+          schema_version: "0.1.0",
+          source_package_version: "0.1.0",
+          published_at: "2026-08-17T12:00:00Z"
+        }];
+      },
+      getPublishedCurriculumPackage: async () => {
+        calls.push("package");
+        return [row("hub-alpha", "course-one")];
+      }
+    }
+  });
+  const reused = await second.loadLatest();
+  assert.equal(reused.source, "published");
+  assert.equal(reused.package.version, "0.2.0");
+  assert.deepEqual(calls, ["package", "metadata"]);
+});
+
+test("a newly published package version invalidates the curriculum cache", async () => {
+  const storage = memoryStorage();
+  const cache = createCacheManager(storage);
+  cache.write("hub-alpha", "course-one", row("hub-alpha", "course-one"), pkg("hub-alpha", "course-one"));
+  const calls = [];
+  const remoteVersion = "0.2.1";
+  const service = createPublishedCurriculumService({
+    hubCode: "hub-alpha",
+    courseKey: "course-one",
+    storage,
+    api: {
+      getPublishedCurriculum: async () => {
+        calls.push("metadata");
+        return [{
+          hub_code: "hub-alpha",
+          course_key: "course-one",
+          package_version: remoteVersion,
+          schema_version: "0.1.0",
+          source_package_version: "0.1.0",
+          published_at: "2026-09-21T12:00:00Z"
+        }];
+      },
+      getPublishedCurriculumPackage: async () => {
+        calls.push("package");
+        return [row("hub-alpha", "course-one", {
+          package_version: remoteVersion,
+          package: pkg("hub-alpha", "course-one", remoteVersion)
+        })];
+      }
+    }
+  });
+  const loaded = await service.loadLatest();
+  assert.equal(loaded.package.version, "0.2.1");
+  assert.deepEqual(calls, ["metadata", "package"]);
+  const refreshed = await service.refresh();
+  assert.equal(refreshed.package.version, "0.2.1");
+  assert.deepEqual(calls, ["metadata", "package", "metadata"]);
+});
+
+test("curriculum cache never treats learner progress rows as a teaching package", async () => {
+  const storage = memoryStorage();
+  storage.setItem(
+    curriculumCacheKey("hub-alpha", "course-one"),
+    JSON.stringify({
+      hubCode: "hub-alpha",
+      courseKey: "course-one",
+      packageVersion: "0.2.0",
+      package: { activity_key: "week-1", latest_score: 9 }
+    })
+  );
+  const calls = [];
+  const service = createPublishedCurriculumService({
+    hubCode: "hub-alpha",
+    courseKey: "course-one",
+    storage,
+    api: {
+      getPublishedCurriculum: async () => {
+        calls.push("metadata");
+        return [{ hub_code: "hub-alpha", course_key: "course-one", package_version: "0.2.0" }];
+      },
+      getPublishedCurriculumPackage: async () => {
+        calls.push("package");
+        return [row("hub-alpha", "course-one")];
+      }
+    }
+  });
+  const loaded = await service.loadLatest();
+  assert.equal(loaded.source, "published");
+  assert.equal(loaded.package.hub.id, "hub-alpha");
+  assert.deepEqual(calls, ["package"]);
+});
+
 test("offline mode uses a valid cache and ignores corrupted cache entries", async () => {
   const storage = memoryStorage();
   const cache = createCacheManager(storage);

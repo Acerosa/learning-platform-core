@@ -301,9 +301,49 @@ function createPublishedCurriculumService(options = {}) {
     getAccessToken: options.getAccessToken || (() => options.session?.access_token)
   });
   let current = null;
+  let loaded = null;
+  let inflight = null;
   function setState(state) {
     current = state || null;
     return current;
+  }
+  function remember(result) {
+    loaded = result;
+    return result;
+  }
+  function publicationVersion(value) {
+    if (!value || typeof value !== "object") return "";
+    return String(
+      value.package_version || value.packageVersion || value.version || value.package?.version || ""
+    );
+  }
+  function metadataForHub(rows) {
+    const list = Array.isArray(rows) ? rows : rows ? [rows] : [];
+    return list.find((row) => (row?.hub_code || row?.hubCode) === hubCode && (row?.course_key || row?.courseKey) === courseKey) || null;
+  }
+  function publishedFromCache(cached, reason) {
+    const state = publicationResult(
+      "PUBLISHED",
+      localContext(cached.package, hubCode, courseKey, schemaLoader.supportedSchemaVersion, schemaLoader.supportedPackageVersion),
+      mapPublication(cached)
+    );
+    return remember({
+      source: reason || "published",
+      package: cached.package,
+      state: setState(state),
+      publication: state.publication
+    });
+  }
+  async function matchingCachedPublication(cached) {
+    if (!cached?.package || !validator.validate(cached.package).valid) return null;
+    if (typeof options.api?.getPublishedCurriculum !== "function") return null;
+    const rows = await options.api.getPublishedCurriculum();
+    const metadata = metadataForHub(rows);
+    if (!metadata) return null;
+    const cachedVersion = publicationVersion(cached);
+    const remoteVersion = publicationVersion(metadata);
+    if (!cachedVersion || !remoteVersion || cachedVersion !== remoteVersion) return null;
+    return publishedFromCache(cached);
   }
   async function fallback(reason, packageVersion) {
     const loadBundled = options.loadBundled;
@@ -316,7 +356,7 @@ function createPublishedCurriculumService(options = {}) {
           mapPublication(cached),
           reason
         );
-        return { source: "cache", package: cached.package, state: setState(state2), publication: state2.publication };
+        return remember({ source: "cache", package: cached.package, state: setState(state2), publication: state2.publication });
       }
       const empty = setState(publicationResult(
         reason === "incompatible" ? "INCOMPATIBLE" : reason === "invalid-package" ? "ERROR" : "NO_PUBLICATION",
@@ -324,7 +364,7 @@ function createPublishedCurriculumService(options = {}) {
         null,
         reason
       ));
-      return { source: "none", package: null, state: empty, publication: null };
+      return remember({ source: "none", package: null, state: empty, publication: null });
     }
     const pkg = await loadBundled();
     const validation = validator.validate(pkg);
@@ -337,7 +377,7 @@ function createPublishedCurriculumService(options = {}) {
           mapPublication(cached),
           reason
         );
-        return { source: "cache", package: cached.package, state: setState(state2), publication: state2.publication };
+        return remember({ source: "cache", package: cached.package, state: setState(state2), publication: state2.publication });
       }
       throw new Error("bundled-package-invalid");
     }
@@ -347,24 +387,42 @@ function createPublishedCurriculumService(options = {}) {
       null,
       reason
     );
-    return { source: "bundled", package: pkg, state: setState(state), publication: null };
+    return remember({ source: "bundled", package: pkg, state: setState(state), publication: null });
   }
-  async function load(packageVersion) {
+  async function fetchLivePackage(packageVersion) {
+    const row = await resolver.fetchPublishedPackage(hubCode, courseKey, packageVersion || void 0);
+    const pkg = resolver.hydrate(row);
+    if (!validator.validate(pkg).valid) return fallback("invalid-package", packageVersion);
+    const schema = schemaLoader.inspect(row, pkg);
+    if (!schema.compatible) return fallback("incompatible", packageVersion);
+    cache.write(hubCode, courseKey, row, pkg, packageVersion || "latest");
+    const state = publicationResult(
+      "PUBLISHED",
+      localContext(pkg, hubCode, courseKey, schemaLoader.supportedSchemaVersion, schemaLoader.supportedPackageVersion),
+      mapPublication(row)
+    );
+    return remember({
+      source: "published",
+      package: pkg,
+      state: setState(state),
+      publication: state.publication
+    });
+  }
+  async function load(packageVersion, { revalidate = false } = {}) {
+    if (!revalidate && !packageVersion && loaded?.package && loaded.state?.state === "PUBLISHED") {
+      return loaded;
+    }
+    const cached = cache.read(hubCode, courseKey, packageVersion || "latest");
+    if (!packageVersion && cached?.package && validator.validate(cached.package).valid) {
+      try {
+        const confirmed = await matchingCachedPublication(cached);
+        if (confirmed) return confirmed;
+      } catch {
+      }
+    }
     try {
-      const row = await resolver.fetchPublishedPackage(hubCode, courseKey, packageVersion || void 0);
-      const pkg = resolver.hydrate(row);
-      if (!validator.validate(pkg).valid) return fallback("invalid-package", packageVersion);
-      const schema = schemaLoader.inspect(row, pkg);
-      if (!schema.compatible) return fallback("incompatible", packageVersion);
-      cache.write(hubCode, courseKey, row, pkg, packageVersion || "latest");
-      const state = publicationResult(
-        "PUBLISHED",
-        localContext(pkg, hubCode, courseKey, schemaLoader.supportedSchemaVersion, schemaLoader.supportedPackageVersion),
-        mapPublication(row)
-      );
-      return { source: "published", package: pkg, state: setState(state), publication: state.publication };
+      return await fetchLivePackage(packageVersion);
     } catch {
-      const cached = cache.read(hubCode, courseKey, packageVersion || "latest");
       if (cached?.package && validator.validate(cached.package).valid) {
         const state = publicationResult(
           "FALLBACK",
@@ -372,18 +430,33 @@ function createPublishedCurriculumService(options = {}) {
           mapPublication(cached),
           "unavailable"
         );
-        return { source: "cache", package: cached.package, state: setState(state), publication: state.publication };
+        return remember({
+          source: "cache",
+          package: cached.package,
+          state: setState(state),
+          publication: state.publication
+        });
       }
-      return fallback("unavailable", packageVersion);
+      return remember(await fallback("unavailable", packageVersion));
     }
+  }
+  function loadLatest() {
+    if (inflight) return inflight;
+    inflight = load(void 0).finally(() => {
+      inflight = null;
+    });
+    return inflight;
   }
   return Object.freeze({
     hubCode,
     courseKey,
-    loadLatest: () => load(void 0),
+    loadLatest,
     loadVersion: (version) => load(version),
-    refresh: () => load(void 0),
-    invalidate: () => cache.invalidate(hubCode, courseKey),
+    refresh: () => load(void 0, { revalidate: true }),
+    invalidate: () => {
+      loaded = null;
+      cache.invalidate(hubCode, courseKey);
+    },
     getPublicationMetadata: () => current?.publication || null,
     getState: () => current,
     renderStatus: (state) => renderPublicationStatus(state || current),
