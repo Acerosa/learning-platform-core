@@ -1,6 +1,6 @@
 # NHC Learning Platform — Supabase request-volume audit
 
-**Status:** Stage 1 audit complete. Phase 1 and Phase 2 remediation applied 2026-09-21. Phase 3 release + validation + measurement applied 2026-09-21. Do not start Phase 4 until production measurements exist.  
+**Status:** Stage 1 audit complete. Phase 1 and Phase 2 remediation applied 2026-09-21. Phase 3 release + validation + measurement applied 2026-09-21. Phase 3.5 existed only as uncommitted local working-tree changes until this integration; it was **not** previously deployed. Do not start Phase 4 until Phase 3.5 is live and production measurements exist.  
 **Date:** 2026-09-21  
 **Reported volume:** approximately 9.4 million requests/month on the RR NHC Hub Supabase project  
 **Scope:** learner hubs, Central Admin Portal, shared Core client, shared backend. No schema, RLS, RPC contract, scoring, or progress-recording changes were made.
@@ -1289,5 +1289,151 @@ No new unexpected Core path was found during 3A.
 8. **Regressions / unexpected sources:** none in 0.2.23→0.2.25. Remaining expected volume is §16.7.
 
 *Phase 3 is release + measurement. Do not start Phase 4 optimisation until 24h / 7d / 28d production series exist.*
+
+---
+
+## 17. Phase 3.5 — Known leakage remediation
+
+**Date:** 2026-09-21  
+**Rule:** change a request path only when the code demonstrates amplification (repeat fetch without invalidation, duplicate operation, timer with no possible change, duplicated/uncleared listener, render-driven traffic, a safely isolated Core backport, or data already in memory). No speculative optimisation. No Core upgrades for Unit 14 / L2E / Readiness. No schema / RLS / Auth / scoring / completion / evidence-identity / carrier-key / debounce / Realtime-removal changes.
+
+**Deployment fact:** the original Phase 3.5 patch set was prepared locally and was **never merged**. A verification pass found production still on the older request behaviour. This section records the later reconciliation against current production, not a rewrite of that earlier investigation.
+
+### 17.0 Investigation vs production vs final implementation
+
+| | Original investigation notes | Production discovered at integration | Final implementation |
+|---|---|---|---|
+| Unit 14 Core pin | Assumed **0.2.8** (no intern) | **0.2.22** (`5781524`, PR #29) | **Plan A.** No hub-local intern. Core `completedReads` already satisfies N-once / 0-rerender. Regression tests only. |
+| L2E Core pin | Assumed **0.2.20** (no intern; fill-gap 0.2.21 not taken) | **0.2.22** (`3cd1d49`, PR #28) | **Plan A.** No hub-local intern. Fill-gap identity unchanged (hub still has no `questionId:gapId`). |
+| L2E `recoverLearnerAfterAuthRestore` | Keep extra refresh (0.2.20 probe race) | Still present on 0.2.22 | **Kept.** 0.2.22 does not have 0.2.25 quiet token-rotate. Auth-gated fetch mitigates JWT wait, but initialise probe ordering is not proven gone. No speculative removal. |
+| Unit 3 Core pin | 0.2.25 planned | **0.2.25** (`f8eec16`, PR #93) | Carrier `hydratedWeeks` + bootstrap skip when authenticated+context. |
+| T Level Core pin | 0.2.25 planned | **0.2.25** (`9d2fda6`, PR #53) | Bootstrap skip when authenticated+context. |
+| Admin | Poll leak on main | `6150022` still `setInterval` keyed on `session` object | State-aware poll (`groupingPollShouldRun`); interval keyed on `session?.id` / `session?.status`. |
+
+Hub-local `completedHydrates` / `inflightHydrates` was **not** added. Production `content/engine/state.js` already calls Core `current.hydrate(load())` without `{ fresh: true }`, so Core 0.2.22 intern applies.
+
+### 17.1 CONFIRMED LEAKAGE FIXED
+
+#### A — Unit 14 WeekPage hydrate storm
+
+| | |
+|---|---|
+| **PATH** | Production Core **v0.2.22** module-level `completedReads` / `inflightReads` in `activity-state.js`. Hub `state.js` / `interactive.js` call `hydrate()` without `{ fresh: true }`. **No hub-local intern.** |
+| **ORIGINAL PLAN** | Backport intern into hub `content/engine/state.js` because the investigation assumed pin **0.2.8**. |
+| **WHY THAT PLAN WAS NOT USED** | Production had already moved to 0.2.22. Adding hub-local intern would duplicate Core state. |
+| **BEFORE (on pre-0.2.22 Core)** | Opening a week with N activities issued `get_activity_state` on every WeekPage effect **and** every interactive rebind. Re-renders multiplied: **N × renders**. |
+| **AFTER (current 0.2.22 pin)** | **N hydrates once per JS session**. Re-renders and interactive rebind: **0 extra** unless `reset()` / `{ fresh: true }`. |
+| **WHY BEFORE WAS LEAKAGE** | Pre-0.2.22 `createStore().hydrate()` had no intern. WeekPage `[engine, platform, resolved, weekId]` plus `interactive.js` `store.hydrate()` repeated the same logical reads. |
+| **BEHAVIOUR PRESERVED** | Auth, hub access, scoring, completion, fill-gap, Realtime, activity-state schema, RPC contracts unchanged. Saved drafts still restore on the first hydrate. |
+| **TESTS** | `test/week-hydrate-core-intern.test.js` (pin 0.2.22, no hub intern, N-once / 0-rerender). |
+
+#### B — L2E / EDT WeekPage hydrate storm
+
+| | |
+|---|---|
+| **PATH** | Same as Unit 14: Core **v0.2.22** intern. **No hub-local intern.** |
+| **ORIGINAL PLAN** | Hub intern because the investigation assumed pin **0.2.20**. |
+| **WHY THAT PLAN WAS NOT USED** | Production had already moved to 0.2.22. |
+| **BEFORE (on pre-0.2.22 Core)** | Same N × renders `get_activity_state` fan-out as Unit 14. |
+| **AFTER (current 0.2.22 pin)** | **N once per JS session**; rerenders **0 extra**. |
+| **WHY BEFORE WAS LEAKAGE** | Core 0.2.20 lacked the 0.2.22 intern; WeekPage + interactive double-hydrate. |
+| **BEHAVIOUR PRESERVED** | Fill-gap evidence identity unchanged (hub still has no `questionId:gapId`). `recoverLearnerAfterAuthRestore` extra refresh **kept** (see §17.2). Completion / restore unchanged. |
+| **TESTS** | `test/week-hydrate-core-intern.test.js`, `test/enrolment-ux.test.js` pin + recover-kept assertion, existing `src/platform-runtime.test.ts` fill-gap completion. |
+
+#### C — Admin Group Generator polling
+
+| | |
+|---|---|
+| **PATH** | `admin_api.get_grouping_session` via `src/views/group-generator.tsx` + `src/views/grouping-poll.ts` |
+| **WHY IT EXISTED** | Students can join until status `closed`. Staff UI needs live participant/team updates. No grouping Realtime channel exists; none was added. |
+| **BEFORE** | `setInterval(2500)` while `live && session && status !== closed`. Restarted on every `session` object identity (each poll `setSession`). Ran while the tab was hidden. Continued until unmount or close. **24 req/min**, **1,440 req/hour**, a typical 40-minute admin session with the tool open: **~960**, including background tabs. |
+| **AFTER idle (no session / closed / unmounted):** **0 req/min** | |
+| **AFTER hidden tab with live session:** **0 req/min** (timer stopped; one reconcile on `visibilitychange` → visible) | |
+| **AFTER active joining/proposed/published and visible:** **24 req/min until close** | |
+| **WHY BEFORE WAS LEAKAGE** | Timer ran when no join/state transition could be observed (hidden tab). Interval restarted on every poll result. No stop after the component was the only consumer. |
+| **BEHAVIOUR PRESERVED** | Create / progress / complete / fail / close / restore-from-sessionStorage unchanged. Poll still used for joining/proposed/published because students can join until closed. |
+| **TESTS** | `tests/group-generator-poll.test.ts` |
+
+#### D — Unit 3 compatibility carriers
+
+| | |
+|---|---|
+| **PATH** | `js/core/backend-progress.js` `hydratedWeeks`; WeekPage / ActivityPage call `reconcile()` after the week’s progress script loads. |
+| **TRACE** | Two keys per weeks 2–7 (`HOST_WORK_CARRIERS`). Consumer: classic week engines + catalogue completion chrome. Required when that week’s progress global exists so saved host work restores. Eager on first **loaded** week only (SPA loads `CATALOGUE_PROGRESS_SCRIPTS[week]`, not all six). Dual keys **kept**. |
+| **BEFORE** | Every successful `getProgress` (including `force` after submit) re-hydrated **every loaded week** (worst case 12 `get_activity_state`). Skip path did **not** hydrate a week that appeared after SPA navigation. |
+| **AFTER** | Each loaded week hydrates **once per signed-in JS session** (2 RPCs/week). `force` refreshes `my_activity_progress` only. Newly opened weeks hydrate once on skip-path reconcile. |
+| **WHY BEFORE WAS LEAKAGE** | Same carrier state fetched again with no invalidation; skip path then failed to restore newly loaded weeks. |
+| **BEHAVIOUR PRESERVED** | Both carrier keys per week remain. First visit to a week still restores. Progress chrome still updates from `getProgress`. |
+| **TESTS** | `tests/backend-progress.test.js`, `tests/core-integration.test.js`, `test/site-integrity.test.js` |
+
+#### F — Hub-local duplicate bootstrap (T Level + Unit 3)
+
+| | |
+|---|---|
+| **PATH** | `src/platform.ts` `recoverLearnerAfterAuthRestore` |
+| **BEFORE** | After Core 0.2.25 `initialise`, always `learner.refresh()` again (ensure + profile + enrolments; onboarding-required could add a second). |
+| **AFTER** | Skip when learner is already `authenticated` with `context`. Retry path kept if onboarding-required. |
+| **WHY BEFORE WAS LEAKAGE** | Core 0.2.25 already completed that bootstrap. Identical data, no invalidation. |
+| **BEHAVIOUR PRESERVED** | Join/onboarding retry unchanged. L2E copy **not** skipped. |
+| **TESTS** | T Level `test/supabase-frontend-migration.test.js`; Unit 3 `tests/core-integration.test.js` |
+
+### 17.2 INVESTIGATED BUT LEGITIMATE / REQUIRED TRAFFIC
+
+| Item | Finding | Action |
+|---|---|---|
+| Unit 3 first-visit carrier hydrate (2 keys for the opened week) | Required restore of host worksheets / OCR practice. Not available elsewhere. | **No change** to the first hydrate. |
+| Dual `HOST_WORK_CARRIERS` keys | Compatibility; not proven obsolete. | **Kept both**. |
+| T Level / Unit 3 WeekPage N hydrates on first open | Core 0.2.25 intern already once-per-session. | **No extra hub intern**. |
+| L2E `recoverLearnerAfterAuthRestore` extra refresh | Original note assumed 0.2.20 probe race. Production is **0.2.22**. Auth-gated fetch waits for a user JWT, but 0.2.22 still republishes on `TOKEN_REFRESHED` and initialise-time probe ordering is **not proven gone**. | **Not removed.** Skip applies only on Unit 3 / T Level (0.2.25). |
+| Core failed-save retry | `pendingSave` + visibility/pagehide flush. Transient hydrate retries **max 4** with backoff. One store per activity. Offline does not tight-loop RPCs. | **Retained**. |
+| Core Realtime `learner-state:{uid}` | One channel per signed-in hub tab; `start()` reuses; `stop()` unsubscribes. Heartbeats are infrastructure. | **No change**. No new duplicate-channel evidence. |
+| Year 1 Readiness | Auth/progress off. Diagnostic RPCs per action. No `setInterval`. Pin **0.2.5**. | **No change**. |
+| OCR / quiz elapsed `setInterval` (if present in classic HTML) | Local UI timer, not Supabase. | **No change**. |
+| Admin Hub Learning / analytics reads | On-demand RPCs; Phase 2 already local-filtered Hub Learning. | **No Phase 3.5 change**. |
+| Check / Finish `save_activity_state` | Learner persistence. | **Not touched**. |
+| Curriculum / assignments on first boot | Required. Phase 2/3 already stopped TOKEN_REFRESHED replay. | **No further cut**. |
+
+### 17.3 Timer / listener / subscription sweep (E)
+
+Searched Core, T Level, Unit 3, Unit 14, L2E, Year 1 Readiness, Admin for `setInterval`, recursive `setTimeout`, `visibilitychange`, `onAuthStateChange`, `channel(`, `subscribe(`, `addEventListener`.
+
+**Confirmed leak fixed:** Admin Group Generator interval (§17.1 C).
+
+**Not leaks:** Core activity-state visibility flush (save, not poll); Core auth listener (TOKEN_REFRESHED no longer bootstraps in 0.2.25); Core Realtime one channel; Unit 3 `unit3:backend-progress` DOM listener cleaned on WeekPage unmount; no `setInterval` in Unit 14 / L2E / Core src / Year 1 Readiness src.
+
+### 17.4 Retry loops (G)
+
+Failed-save retry **kept**. Transient activity-state reads: `ACTIVITY_STATE_TRANSIENT_MAX_ATTEMPTS = 4` + backoff. Successful hydrate interned (Core 0.2.22+). No hub-local intern on Unit 14 / L2E. No second hub retry system overlapping Core. Reconnect Realtime `reconcileOnce` is single-flight. **No tight retry loop found.**
+
+### 17.5 Realtime (H)
+
+No new evidence of duplicate channels, failed cleanup, reconnect multiplication, or duplicate listeners. Heartbeats remain legitimate infrastructure traffic, counted separately from leakage.
+
+### 17.6 Estimated requests eliminated per normal session
+
+| Session | Eliminated (order of magnitude) |
+|---|---|
+| Unit 14 or L2E: open one week (N≈6), stay / re-render / bind interactive | **~(renders−1)×N** `get_activity_state` (often tens per week view in React) → **0 extra** |
+| Unit 3: visit weeks 2–7 then submit (force reconcile) | **up to 10 re-hydrates** avoided after the first 12; subsequent week revisits **0** carrier hydrates |
+| T Level / Unit 3 signed-in boot (already authenticated with context) | **1 learner.refresh** (~ensure + profile + enrolments, sometimes 2) **removed** |
+| Admin Group Generator left open in a background tab for a lesson (~40 min) | **~960 → 0** while hidden; **0** after close |
+| Admin Group Generator no session | **24/min → 0** |
+
+### 17.7 Integration deployment record
+
+The earlier Phase 3.5 patch existed only locally. It was **not** live until this integration. Production SHAs below are filled after merge + GitHub Pages deploy.
+
+| Component | Final implementation | Tests (this integration) | Remediation branch | Production SHA | Core pin |
+|---|---|---|---|---|---|
+| Unit 14 | Core 0.2.22 intern; no hub intern | `test:node` 84 passed | `fix/phase-3-5-request-leakage` | pending merge | **0.2.22** |
+| L2E | Core 0.2.22 intern; no hub intern; `recoverLearner` kept | `test:node` 28 passed; `platform-runtime` 13 passed | `fix/phase-3-5-request-leakage` | pending merge | **0.2.22** |
+| Unit 3 | `hydratedWeeks` + bootstrap skip | `test:node` TAP 76 passed + 249 supabase static checks | `fix/phase-3-5-request-leakage` | pending merge | **0.2.25** |
+| T Level | bootstrap skip | `test:node` 102 passed | `fix/phase-3-5-request-leakage` | pending merge | **0.2.25** |
+| Admin | state-aware Group Generator poll | poll/roles 5 passed (Node 22) | `fix/phase-3-5-request-leakage` | pending merge | n/a |
+| Core | this §17 correction only | docs | `docs/phase-3-5-request-leakage` | pending merge | n/a |
+
+Live request behaviour for Unit 14 / L2E / Unit 3 / T Level / Admin is **proven by deployed code + regression tests**, not by a live network trace, unless a later measurement pass records otherwise.
+
+*Phase 3.5 stops here. Do not start Phase 4 optimisation.*
 
 
