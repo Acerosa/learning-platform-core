@@ -1106,15 +1106,23 @@ Existing process (README + 0.2.23 precedent): quality workflow, changelog, `dist
 | Item | Value |
 |---|---|
 | Validation | **passed** |
-| Tagged | **yes — `v0.2.25`** (filled after tag; see §16.8) |
-| Hubs moved | **T Level**, **Unit 3** only |
+| Tagged | **yes** — [`v0.2.25`](https://github.com/Acerosa/learning-platform-core/releases/tag/v0.2.25) on merge `1d7cd87` ([PR #30](https://github.com/Acerosa/learning-platform-core/pull/30)) |
+| Hubs moved | **T Level** ([PR #53](https://github.com/Acerosa/tlevel-software-development-hub/pull/53), `9d2fda6`), **Unit 3** ([PR #93](https://github.com/Acerosa/unit-3-Cyber-Security-Hub/pull/93), `f8eec16`) |
 | Not moved | Unit 14, L2E/EDT, Year 1 Readiness (Phase 2 decisions stand) |
 
 ### 16.3 3C — Deployment verification
 
-`package.json` / `coreVersion` is **not** sufficient. CI must clone `ref: v0.2.25`, and the Vite bundle must contain Core 0.2.25 behaviour (`TOKEN_REFRESHED` quiet rotate, `published_curriculum` metadata short-circuit).
+`package.json` / `coreVersion` is **not** sufficient. CI cloned `ref: v0.2.25`, Vite production bundles contain `AUTH_BOOTSTRAP` (0.2.25-only counter), `getCachedHubAssignments`, `TOKEN_REFRESHED`, and `published_curriculum`. GitHub Pages deploys for both pin PRs **succeeded**.
 
-Filled after hub re-pin in §16.8.
+| Hub | Declared version | CI version | Resolved/built version | Expected production version |
+|---|---|---|---|---|
+| T Level Software Development | `0.2.25` (`src/config.ts`, `js/config/app-config.js`, `learning-platform-hub.json`) | Pages `ref: v0.2.25` | Live `assets/main-CVTVJHIU.js` contains `AUTH_BOOTSTRAP` (×3), `getCachedHubAssignments`; local `file:` Core **0.2.25** | **0.2.25** (live) |
+| Unit 3 Cyber Security | `0.2.25` (same three manifests) | Pages `ref: v0.2.25` | Live `assets/main-B20YSmG6.js` contains `AUTH_BOOTSTRAP` (×3), `getCachedHubAssignments`; local `file:` Core **0.2.25** | **0.2.25** (live) |
+| Unit 14 SEB | `0.2.8` | `v0.2.8` | not rebuilt for this phase | **0.2.8** (unchanged) |
+| L2E / EDT | `0.2.20` | `v0.2.20` | not rebuilt for this phase | **0.2.20** (unchanged) |
+| Year 1 Readiness | `0.2.5` | `v0.2.5` | not rebuilt for this phase | **0.2.5** (unchanged) |
+
+All four columns agree for T Level and Unit 3: **0.2.25**.
 
 ### 16.4 3D — Request instrumentation
 
@@ -1272,12 +1280,12 @@ No new unexpected Core path was found during 3A.
 ### 16.8 Phase 3 report
 
 1. **Release validation:** **passed**. No accidental unrelated Core changes. 267 Core tests passed. T Level `npm test` passed. Unit 3 `test:node` passed. Persistence, token rotation, Realtime `setAuth`, Check/Finish, dual carriers, and curriculum cache-first held.
-2. **Tagged:** pending merge of the 0.2.25 release; tag name **`v0.2.25`**.
-3. **Hubs moved:** T Level and Unit 3 only, after the tag exists. Unit 14 / L2E / Readiness **not** moved.
-4. **Exact deployed Core versions:** pending Pages deploy of the hub pin commits. Local `file:` and `npm pack` already identify **0.2.25**.
-5. **Regression tests:** Core 267 passed; T Level full `npm test` passed; Unit 3 `test:node` passed. Re-run after re-pin is recorded here when done.
-6. **Baseline request counts:** §16.5 tables (scenarios A–F).
-7. **Recommended metrics:** §16.6.
+2. **Tagged:** **yes.** [`v0.2.25`](https://github.com/Acerosa/learning-platform-core/releases/tag/v0.2.25) on `1d7cd87` (PR #30). `0.2.24` was never tagged.
+3. **Hubs moved:** T Level (PR #53) and Unit 3 (PR #93) only. Unit 14 / L2E / Readiness **not** moved.
+4. **Exact deployed Core versions:** T Level live **0.2.25** (`main-CVTVJHIU.js`). Unit 3 live **0.2.25** (`main-B20YSmG6.js`). Both Pages deploys succeeded after cloning `v0.2.25`.
+5. **Regression tests:** Core `npm run check` **267 passed**. T Level full `npm test` **passed** before and after re-pin (includes Vite build). Unit 3 `test:node` **passed** after re-pin (includes 0.2.25 pin assertions, persistence, dual-carrier coalesce). Hub Pages **build** jobs on the pin merges **passed**. Unrelated Unit 3 vitest week5-defensive classification retry UI failure is unchanged.
+6. **Baseline request counts:** §16.5 tables (scenarios A–F). These are Core logical operations from the fake-Supabase harness, plus documented hub overlays. They are not live dashboard samples.
+7. **Recommended metrics:** §16.6 (24h / 7d / 28d; REST vs Auth vs Realtime vs DB; normalised per learner/session/activity).
 8. **Regressions / unexpected sources:** none in 0.2.23→0.2.25. Remaining expected volume is §16.7.
 
 *Phase 3 is release + measurement. Do not start Phase 4 optimisation until 24h / 7d / 28d production series exist.*
