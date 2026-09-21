@@ -110,7 +110,11 @@ Service details not expanded in later sections:
 - `platform.profile.getProfile()` returns the learner-scoped backend profile or `null`. Call it only after authentication when a one-off raw profile refresh is necessary; normal UI should prefer learner context. It emits no events. Returned identity is display data and must not be persisted or used as browser authority.
 - `platform.curriculum` loads validated published teaching packages for the
   configured `hubCode` and `courseKey`. See [Curriculum runtime](curriculum-runtime.md).
-  Hubs must not call publication RPCs directly.
+  `loadLatest()` uses a version-aware local cache: a matching
+  `package_version` from `api.published_curriculum` avoids repeating the full
+  package RPC. `refresh()` re-checks publication metadata. Cache entries are
+  teaching packages only, never learner progress. Hubs must not call
+  publication RPCs directly.
 
 ## 5. Theme API — STABLE
 
@@ -215,9 +219,11 @@ Security: context is presentation data, not browser authority. Do not copy it in
 
 - `getAssignments()` → unscoped backend assignment rows (`api.my_assignments`).
 - `getHubAssignments(hubCode)` → assignments for groups bound to this hub.
+- `getCachedHubAssignments(hubCode)` → last hub assignment snapshot from this JS session, or `null`.
+- `clearHubAssignmentCache()` → drop the session snapshot (called on sign-out).
 - `getCurriculumDelivery()` → learner-safe delivery rows.
 
-Lifecycle: fetch after learner context is authenticated. `createPlatform()` uses `getHubAssignments(hubCode)` plus `api.resolve_learner_hub_access` to derive `ready`/`no-assignments`/`no-enrolment` for the current hub.
+Lifecycle: fetch after learner context is authenticated. `createPlatform()` uses `getHubAssignments(hubCode)` plus `api.resolve_learner_hub_access` to derive `ready`/`no-assignments`/`no-enrolment` for the current hub. Successful hub assignment reads are remembered for the current session so landing pages can reuse boot data. This is not a progress cache and is cleared on sign-out.
 
 Security: hub-scoped assignment reads send only the authored hub code. A hub must not choose an internal assignment ID or group UUID for authorisation. `getAssignments()` remains available for compatibility and still returns the union of all active enrolments.
 
@@ -235,7 +241,7 @@ Security: hub-scoped assignment reads send only the authored hub code. A hub mus
 
 Authenticated learner in-progress activity state is persisted server-side and restored across browser sessions and devices. Browser storage may only be used as cache, resilience, or unauthenticated fallback. Drafts are not official attempts, scores, or derived progress.
 
-Lifecycle: call after authentication. Hydrate before rendering an unfinished activity. Persist the latest checked response immediately on Check. Debounced local/remote cache is allowed for text drafts before Check. Question retry replaces the current response for that question and does not create an attempt. `submit_attempt` remains the only official completion. `clearActivityState` is for explicit reset, not for Check or retry.
+Lifecycle: call after authentication. Hydrate before rendering an unfinished activity. Persist the latest checked response immediately on Check. Debounced local/remote cache is allowed for text drafts before Check. Pending remote writes flush on `pagehide`, `beforeunload`, and document `visibilitychange` (hidden). Identical persistable payloads do not call `save_activity_state` again. Question retry replaces the current response for that question and does not create an attempt. `submit_attempt` remains the only official completion. `clearActivityState` is for explicit reset, not for Check or retry.
 
 Security: results from `getProgress` / `getAttempts` are backend authority. Local browser draft state must not be merged into authoritative completion, attempts or scores. Draft payloads must not contain marks, scores, answer keys or learner identity fields.
 

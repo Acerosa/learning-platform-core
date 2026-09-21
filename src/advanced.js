@@ -39,5 +39,14 @@ export { toApiResponse } from "./core/evidence/evidence.js";
 export { createPlatformState, derivePlatformState } from "./core/state/platform-state.js";
 export { mapPlatformError } from "./core/errors/platform-error.js";
 export { createLogger, redact } from "./core/logging/logger.js";
+export {
+  REQUEST_CATEGORIES,
+  categorizePlatformRequest,
+  recordPlatformRequest,
+  snapshotPlatformRequests,
+  resetPlatformRequests,
+  enablePlatformRequestDebug,
+  disablePlatformRequestDebug
+} from "./core/logging/request-counter.js";
 export { createFeatureFlags } from "./core/feature-flags/feature-flags.js";
 export { createPublishedCurriculumService } from "./curriculum-runtime/index.js";

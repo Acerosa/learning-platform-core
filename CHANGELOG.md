@@ -2,6 +2,45 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## 0.2.25 - 2026-09-21
+
+### Changed
+
+- Auth `TOKEN_REFRESHED`, repeated `INITIAL_SESSION`, and same-user `SIGNED_IN`
+  rotate the in-memory JWT (and Realtime `setAuth`) without republishing a new
+  login. Learner profile, enrolments, hub access, and assignments are not
+  fetched again unless the Auth user changes, the session is signed out, or
+  `refresh()` / `refreshHubSession()` is called. Token refresh itself is
+  unchanged.
+- `curriculum.loadLatest()` is cache-first and version-aware. A valid hub/course
+  cache is confirmed with `api.published_curriculum` metadata. The full
+  `published_curriculum_package` RPC runs on first download, when the published
+  `package_version` changes, or when metadata is unavailable. Same-session
+  `loadLatest()` reuses the already loaded package. `refresh()` re-checks
+  metadata. Offline/error fallback is unchanged. Learner progress is never
+  stored as curriculum.
+
+### Added
+
+- Optional debug counters for logical Supabase operations (`AUTH_BOOTSTRAP`,
+  `CURRICULUM`, `ASSIGNMENTS`, `GET_ACTIVITY_STATE`, `SAVE_ACTIVITY_STATE`,
+  `SUBMIT_ATTEMPT`, `PROGRESS`, `REALTIME`, `ADMIN`, `OTHER`). Counters store
+  operation names only — never JWTs, payloads, learner identity, or evidence.
+  Off by default for logging; in-memory counts do not change request behaviour.
+
+## 0.2.24 - 2026-09-21
+
+### Fixed
+
+- Pending activity-state saves now flush when the document becomes hidden
+  (`visibilitychange`), in addition to `pagehide` / `beforeunload`. Local cache
+  and retry behaviour are unchanged; identical persistable payloads still skip
+  `save_activity_state`.
+- Assignment service remembers the last `getHubAssignments(hubCode)` result for
+  the current JS session so hubs can reuse boot assignment rows instead of
+  repeating `my_hub_assignments`. Sign-out clears the snapshot. This is not a
+  progress cache.
+
 ## 0.2.23 - 2026-09-15
 
 ### Fixed

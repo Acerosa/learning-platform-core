@@ -255,6 +255,94 @@ function createSupabaseClient(config = {}, dependencies = {}) {
   return createClient(projectUrl, publishableKey, { auth });
 }
 
+// src/core/logging/request-counter.js
+var REQUEST_CATEGORIES = Object.freeze([
+  "AUTH_BOOTSTRAP",
+  "CURRICULUM",
+  "ASSIGNMENTS",
+  "GET_ACTIVITY_STATE",
+  "SAVE_ACTIVITY_STATE",
+  "SUBMIT_ATTEMPT",
+  "PROGRESS",
+  "REALTIME",
+  "ADMIN",
+  "OTHER"
+]);
+var AUTH_BOOTSTRAP_OPS = /* @__PURE__ */ new Set([
+  "getUser",
+  "signIn",
+  "signUp",
+  "signOut",
+  "refreshSession",
+  "ensure_learner_auth_link",
+  "my_profile",
+  "my_enrolments",
+  "resolve_learner_hub_access",
+  "complete_learner_onboarding",
+  "join_learner_hub_group",
+  "registration_options"
+]);
+var CURRICULUM_OPS = /* @__PURE__ */ new Set(["published_curriculum", "published_curriculum_package"]);
+var ASSIGNMENT_OPS = /* @__PURE__ */ new Set(["my_hub_assignments", "my_assignments", "my_activity_delivery"]);
+var PROGRESS_OPS = /* @__PURE__ */ new Set(["my_activity_progress", "my_attempts", "my_responses", "mark_formative_response"]);
+var REALTIME_OPS = /* @__PURE__ */ new Set(["setAuth", "channel.subscribe", "channel.unsubscribe"]);
+function emptyCounts() {
+  const counts2 = { TOTAL: 0 };
+  REQUEST_CATEGORIES.forEach((category) => {
+    counts2[category] = 0;
+  });
+  return counts2;
+}
+var counts = emptyCounts();
+var operations = [];
+var debugEnabled = false;
+var debugSink = null;
+function categorizePlatformRequest(kind, name) {
+  const op = String(name || "");
+  if (kind === "admin" || op.startsWith("list_hub_learning") || op.startsWith("summarise_hub_learning") || op.startsWith("admin_api.") || op.startsWith("get_grouping_session")) {
+    return "ADMIN";
+  }
+  if (kind === "realtime" || REALTIME_OPS.has(op)) return "REALTIME";
+  if (kind === "auth" || AUTH_BOOTSTRAP_OPS.has(op)) return "AUTH_BOOTSTRAP";
+  if (CURRICULUM_OPS.has(op)) return "CURRICULUM";
+  if (ASSIGNMENT_OPS.has(op)) return "ASSIGNMENTS";
+  if (op === "get_activity_state") return "GET_ACTIVITY_STATE";
+  if (op === "save_activity_state" || op === "clear_activity_state") return "SAVE_ACTIVITY_STATE";
+  if (op === "submit_attempt") return "SUBMIT_ATTEMPT";
+  if (PROGRESS_OPS.has(op)) return "PROGRESS";
+  return "OTHER";
+}
+function recordPlatformRequest(kind, name) {
+  const operation = String(name || "unknown");
+  const category = categorizePlatformRequest(kind, operation);
+  counts[category] += 1;
+  counts.TOTAL += 1;
+  if (operations.length < 500) {
+    operations.push(Object.freeze({ category, operation, kind: String(kind || "rpc") }));
+  }
+  if (debugEnabled && typeof debugSink === "function") {
+    debugSink({ category, operation, kind: String(kind || "rpc") });
+  }
+}
+function snapshotPlatformRequests() {
+  return Object.freeze({
+    counts: Object.freeze({ ...counts }),
+    operations: Object.freeze(operations.slice())
+  });
+}
+function resetPlatformRequests() {
+  counts = emptyCounts();
+  operations = [];
+}
+function enablePlatformRequestDebug(sink) {
+  debugEnabled = true;
+  debugSink = typeof sink === "function" ? sink : null;
+}
+function disablePlatformRequestDebug() {
+  debugEnabled = false;
+  debugSink = null;
+}
+
 // src/core/api/learner-api.js
 function unwrap(result, operation) {
   if (result?.error) throw mapPlatformError(result.error, { operation });
@@ -273,6 +361,7 @@ function createLearnerApi({ client, schema = "api", logger } = {}) {
   const api = client.schema(schema);
   async function read(view, { select = "*", order, ascending = true, filters = [] } = {}) {
     try {
+      recordPlatformRequest("read", view);
       let query = api.from(view).select(select);
       filters.forEach(({ column, value }) => {
         if (value !== void 0 && value !== null && value !== "") query = query.eq(column, value);
@@ -286,6 +375,7 @@ function createLearnerApi({ client, schema = "api", logger } = {}) {
   }
   async function rpc(name, payload = {}) {
     try {
+      recordPlatformRequest("rpc", name);
       return unwrap(await api.rpc(name, payload), `rpc:${name}`);
     } catch (error) {
       logger?.warn("api.rpc.failed", { rpc: name, code: error?.code });
@@ -451,6 +541,13 @@ function isRetryableAuthNetworkError(error) {
 
 // src/core/auth/auth-service.js
 var STALE_SESSION_COPY = "Your previous session is no longer valid. Please sign in again.";
+function sessionUserId(session) {
+  return session?.user?.id || null;
+}
+function sameAuthUser(left, right) {
+  const leftId = sessionUserId(left);
+  return Boolean(leftId) && leftId === sessionUserId(right);
+}
 function staleSessionError(cause) {
   return new PlatformError({
     code: "AUTH_SESSION_STALE",
@@ -478,6 +575,28 @@ function createAuthService({ client, logger, resolveRedirectUrl, cleanAuthCallba
     state = Object.freeze({ ...state, ...next });
     listeners2.forEach((listener) => listener(state));
     return state;
+  }
+  function replaceSessionQuietly(session) {
+    state = Object.freeze({ ...state, status: "authenticated", session, error: null });
+    return state;
+  }
+  function refreshRealtimeAuth() {
+    if (typeof client.realtime?.setAuth !== "function") return;
+    recordPlatformRequest("realtime", "setAuth");
+    void client.realtime.setAuth().catch(() => {
+    });
+  }
+  function applyAuthenticatedSession(session, { notify } = { notify: true }) {
+    if (!notify) {
+      replaceSessionQuietly(session);
+      refreshRealtimeAuth();
+      return state;
+    }
+    return publish({ status: "authenticated", session, error: null });
+  }
+  function shouldQuietlyRotateSession(event, session) {
+    if (state.status !== "authenticated" || !sameAuthUser(state.session, session)) return false;
+    return event === "TOKEN_REFRESHED" || event === "INITIAL_SESSION" || event === "SIGNED_IN" || event === "USER_UPDATED";
   }
   function subscribe(listener) {
     if (typeof listener !== "function") return () => {
@@ -518,6 +637,7 @@ function createAuthService({ client, logger, resolveRedirectUrl, cleanAuthCallba
     let result;
     try {
       result = await client.auth.getUser();
+      recordPlatformRequest("auth", "getUser");
     } catch (error) {
       if (isRetryableAuthNetworkError(error)) {
         return { ok: false, network: true, error };
@@ -559,9 +679,13 @@ function createAuthService({ client, logger, resolveRedirectUrl, cleanAuthCallba
       if (event === "SIGNED_OUT" || !session) {
         const keepStale = state.error?.code === "AUTH_SESSION_STALE" ? state.error : null;
         publish({ status: "signed-out", session: null, error: keepStale });
-      } else {
-        publish({ status: "authenticated", session, error: null });
+        return;
       }
+      if (shouldQuietlyRotateSession(event, session)) {
+        applyAuthenticatedSession(session, { notify: false });
+        return;
+      }
+      applyAuthenticatedSession(session, { notify: true });
     });
     initialisePromise = (async () => {
       try {
@@ -615,6 +739,7 @@ function createAuthService({ client, logger, resolveRedirectUrl, cleanAuthCallba
   async function signIn(email, password) {
     publish({ status: "signing-in", error: null });
     try {
+      recordPlatformRequest("auth", "signIn");
       const result = await client.auth.signInWithPassword({ email: String(email || "").trim(), password });
       if (result.error) throw result.error;
       staleRecoveryAttempted = false;
@@ -656,6 +781,7 @@ function createAuthService({ client, logger, resolveRedirectUrl, cleanAuthCallba
   }
   async function signOut() {
     try {
+      recordPlatformRequest("auth", "signOut");
       const result = await client.auth.signOut({ scope: "local" });
       if (result?.error) throw result.error;
     } catch (error) {
@@ -668,6 +794,7 @@ function createAuthService({ client, logger, resolveRedirectUrl, cleanAuthCallba
   }
   async function refreshSession() {
     try {
+      recordPlatformRequest("auth", "refreshSession");
       const result = await client.auth.refreshSession();
       if (result?.error) throw result.error;
       const session = result?.data?.session || null;
@@ -684,7 +811,8 @@ function createAuthService({ client, logger, resolveRedirectUrl, cleanAuthCallba
         });
       }
       staleRecoveryAttempted = false;
-      return publish({ status: "authenticated", session, error: null });
+      const notify = state.status !== "authenticated" || !sameAuthUser(state.session, session);
+      return applyAuthenticatedSession(session, { notify });
     } catch (error) {
       if (error instanceof PlatformError && error.code === "SESSION_REFRESH_REQUIRED") throw error;
       if (isRetryableAuthNetworkError(error)) {
@@ -765,6 +893,7 @@ function normaliseEnrolments(rows) {
 function createLearnerContext({ authService, profileService, enrolmentService } = {}) {
   let state = Object.freeze({ status: "loading", context: null, error: null });
   let refreshPromise = null;
+  let lastAuthUserId = null;
   const listeners2 = /* @__PURE__ */ new Set();
   function publish(next) {
     state = Object.freeze({ ...state, ...next });
@@ -807,9 +936,18 @@ function createLearnerContext({ authService, profileService, enrolmentService } 
     return refreshPromise;
   }
   authService.subscribe((authState) => {
-    if (authState.status === "authenticated") refresh().catch(() => {
-    });
-    if (authState.status === "signed-out") publish({ status: "signed-out", context: null, error: null });
+    if (authState.status === "signed-out") {
+      lastAuthUserId = null;
+      publish({ status: "signed-out", context: null, error: null });
+      return;
+    }
+    if (authState.status === "authenticated") {
+      const userId = authState.session?.user?.id || null;
+      if (state.status === "authenticated" && lastAuthUserId && lastAuthUserId === userId) return;
+      lastAuthUserId = userId;
+      refresh().catch(() => {
+      });
+    }
   });
   return Object.freeze({
     initialise: async () => {
@@ -1050,9 +1188,27 @@ function createEnrolmentService(api) {
 
 // src/core/assignment/assignment-service.js
 function createAssignmentService(api) {
+  const hubAssignmentCache = /* @__PURE__ */ new Map();
+  async function getHubAssignments(hubCode) {
+    const key = String(hubCode || "");
+    const rows = await api.getHubAssignments(hubCode);
+    const list = Array.isArray(rows) ? rows : [];
+    if (key) hubAssignmentCache.set(key, list);
+    return list;
+  }
+  function getCachedHubAssignments(hubCode) {
+    const key = String(hubCode || "");
+    if (!key || !hubAssignmentCache.has(key)) return null;
+    return hubAssignmentCache.get(key);
+  }
+  function clearHubAssignmentCache() {
+    hubAssignmentCache.clear();
+  }
   return Object.freeze({
     getAssignments: () => api.getAssignments(),
-    getHubAssignments: (hubCode) => api.getHubAssignments(hubCode),
+    getHubAssignments,
+    getCachedHubAssignments,
+    clearHubAssignmentCache,
     getCurriculumDelivery: () => api.getCurriculumDelivery()
   });
 }
@@ -1902,13 +2058,26 @@ function createActivityStateStore({
       globalThis.removeEventListener("pagehide", onHide);
       globalThis.removeEventListener("beforeunload", onHide);
     }
+    if (visibilityNode && typeof visibilityNode.removeEventListener === "function") {
+      visibilityNode.removeEventListener("visibilitychange", onVisibility);
+    }
   }
   const onHide = () => {
     if (!destroyed) flush();
   };
+  function documentIsHidden() {
+    return Boolean(visibilityNode && visibilityNode.visibilityState === "hidden");
+  }
+  function onVisibility() {
+    if (!destroyed && documentIsHidden()) flush();
+  }
+  const visibilityNode = typeof document !== "undefined" && document && typeof document.addEventListener === "function" ? document : null;
   if (typeof globalThis.addEventListener === "function") {
     globalThis.addEventListener("pagehide", onHide);
     globalThis.addEventListener("beforeunload", onHide);
+  }
+  if (visibilityNode) {
+    visibilityNode.addEventListener("visibilitychange", onVisibility);
   }
   return Object.freeze({
     activityKey: key,
@@ -2044,6 +2213,7 @@ function createActivityStateSync({
     if (channel && currentUserId === userId) {
       if (typeof client.realtime?.setAuth === "function") {
         try {
+          recordPlatformRequest("realtime", "setAuth");
           await client.realtime.setAuth();
         } catch {
         }
@@ -2054,6 +2224,7 @@ function createActivityStateSync({
     currentUserId = userId;
     if (typeof client.realtime?.setAuth === "function") {
       try {
+        recordPlatformRequest("realtime", "setAuth");
         await client.realtime.setAuth();
       } catch {
       }
@@ -2062,6 +2233,7 @@ function createActivityStateSync({
     const next = client.channel(topic, { config: { private: true } });
     if (!next || typeof next.on !== "function" || typeof next.subscribe !== "function") return;
     channel = next;
+    recordPlatformRequest("realtime", "channel.subscribe");
     next.on("broadcast", { event: ACTIVITY_STATE_INVALIDATION_EVENT }, (message) => {
       handlePayload(message?.payload || message);
     });
@@ -3114,9 +3286,49 @@ function createPublishedCurriculumService(options = {}) {
     getAccessToken: options.getAccessToken || (() => options.session?.access_token)
   });
   let current = null;
+  let loaded = null;
+  let inflight = null;
   function setState(state) {
     current = state || null;
     return current;
+  }
+  function remember(result) {
+    loaded = result;
+    return result;
+  }
+  function publicationVersion(value) {
+    if (!value || typeof value !== "object") return "";
+    return String(
+      value.package_version || value.packageVersion || value.version || value.package?.version || ""
+    );
+  }
+  function metadataForHub(rows) {
+    const list = Array.isArray(rows) ? rows : rows ? [rows] : [];
+    return list.find((row) => (row?.hub_code || row?.hubCode) === hubCode && (row?.course_key || row?.courseKey) === courseKey) || null;
+  }
+  function publishedFromCache(cached, reason) {
+    const state = publicationResult(
+      "PUBLISHED",
+      localContext(cached.package, hubCode, courseKey, schemaLoader.supportedSchemaVersion, schemaLoader.supportedPackageVersion),
+      mapPublication(cached)
+    );
+    return remember({
+      source: reason || "published",
+      package: cached.package,
+      state: setState(state),
+      publication: state.publication
+    });
+  }
+  async function matchingCachedPublication(cached) {
+    if (!cached?.package || !validator.validate(cached.package).valid) return null;
+    if (typeof options.api?.getPublishedCurriculum !== "function") return null;
+    const rows = await options.api.getPublishedCurriculum();
+    const metadata = metadataForHub(rows);
+    if (!metadata) return null;
+    const cachedVersion = publicationVersion(cached);
+    const remoteVersion = publicationVersion(metadata);
+    if (!cachedVersion || !remoteVersion || cachedVersion !== remoteVersion) return null;
+    return publishedFromCache(cached);
   }
   async function fallback(reason, packageVersion) {
     const loadBundled = options.loadBundled;
@@ -3129,7 +3341,7 @@ function createPublishedCurriculumService(options = {}) {
           mapPublication(cached),
           reason
         );
-        return { source: "cache", package: cached.package, state: setState(state2), publication: state2.publication };
+        return remember({ source: "cache", package: cached.package, state: setState(state2), publication: state2.publication });
       }
       const empty = setState(publicationResult(
         reason === "incompatible" ? "INCOMPATIBLE" : reason === "invalid-package" ? "ERROR" : "NO_PUBLICATION",
@@ -3137,7 +3349,7 @@ function createPublishedCurriculumService(options = {}) {
         null,
         reason
       ));
-      return { source: "none", package: null, state: empty, publication: null };
+      return remember({ source: "none", package: null, state: empty, publication: null });
     }
     const pkg = await loadBundled();
     const validation = validator.validate(pkg);
@@ -3150,7 +3362,7 @@ function createPublishedCurriculumService(options = {}) {
           mapPublication(cached),
           reason
         );
-        return { source: "cache", package: cached.package, state: setState(state2), publication: state2.publication };
+        return remember({ source: "cache", package: cached.package, state: setState(state2), publication: state2.publication });
       }
       throw new Error("bundled-package-invalid");
     }
@@ -3160,24 +3372,42 @@ function createPublishedCurriculumService(options = {}) {
       null,
       reason
     );
-    return { source: "bundled", package: pkg, state: setState(state), publication: null };
+    return remember({ source: "bundled", package: pkg, state: setState(state), publication: null });
   }
-  async function load(packageVersion) {
+  async function fetchLivePackage(packageVersion) {
+    const row = await resolver.fetchPublishedPackage(hubCode, courseKey, packageVersion || void 0);
+    const pkg = resolver.hydrate(row);
+    if (!validator.validate(pkg).valid) return fallback("invalid-package", packageVersion);
+    const schema = schemaLoader.inspect(row, pkg);
+    if (!schema.compatible) return fallback("incompatible", packageVersion);
+    cache.write(hubCode, courseKey, row, pkg, packageVersion || "latest");
+    const state = publicationResult(
+      "PUBLISHED",
+      localContext(pkg, hubCode, courseKey, schemaLoader.supportedSchemaVersion, schemaLoader.supportedPackageVersion),
+      mapPublication(row)
+    );
+    return remember({
+      source: "published",
+      package: pkg,
+      state: setState(state),
+      publication: state.publication
+    });
+  }
+  async function load(packageVersion, { revalidate = false } = {}) {
+    if (!revalidate && !packageVersion && loaded?.package && loaded.state?.state === "PUBLISHED") {
+      return loaded;
+    }
+    const cached = cache.read(hubCode, courseKey, packageVersion || "latest");
+    if (!packageVersion && cached?.package && validator.validate(cached.package).valid) {
+      try {
+        const confirmed = await matchingCachedPublication(cached);
+        if (confirmed) return confirmed;
+      } catch {
+      }
+    }
     try {
-      const row = await resolver.fetchPublishedPackage(hubCode, courseKey, packageVersion || void 0);
-      const pkg = resolver.hydrate(row);
-      if (!validator.validate(pkg).valid) return fallback("invalid-package", packageVersion);
-      const schema = schemaLoader.inspect(row, pkg);
-      if (!schema.compatible) return fallback("incompatible", packageVersion);
-      cache.write(hubCode, courseKey, row, pkg, packageVersion || "latest");
-      const state = publicationResult(
-        "PUBLISHED",
-        localContext(pkg, hubCode, courseKey, schemaLoader.supportedSchemaVersion, schemaLoader.supportedPackageVersion),
-        mapPublication(row)
-      );
-      return { source: "published", package: pkg, state: setState(state), publication: state.publication };
+      return await fetchLivePackage(packageVersion);
     } catch {
-      const cached = cache.read(hubCode, courseKey, packageVersion || "latest");
       if (cached?.package && validator.validate(cached.package).valid) {
         const state = publicationResult(
           "FALLBACK",
@@ -3185,18 +3415,33 @@ function createPublishedCurriculumService(options = {}) {
           mapPublication(cached),
           "unavailable"
         );
-        return { source: "cache", package: cached.package, state: setState(state), publication: state.publication };
+        return remember({
+          source: "cache",
+          package: cached.package,
+          state: setState(state),
+          publication: state.publication
+        });
       }
-      return fallback("unavailable", packageVersion);
+      return remember(await fallback("unavailable", packageVersion));
     }
+  }
+  function loadLatest() {
+    if (inflight) return inflight;
+    inflight = load(void 0).finally(() => {
+      inflight = null;
+    });
+    return inflight;
   }
   return Object.freeze({
     hubCode,
     courseKey,
-    loadLatest: () => load(void 0),
+    loadLatest,
     loadVersion: (version) => load(version),
-    refresh: () => load(void 0),
-    invalidate: () => cache.invalidate(hubCode, courseKey),
+    refresh: () => load(void 0, { revalidate: true }),
+    invalidate: () => {
+      loaded = null;
+      cache.invalidate(hubCode, courseKey);
+    },
     getPublicationMetadata: () => current?.publication || null,
     getState: () => current,
     renderStatus: (state) => renderPublicationStatus(state || current),
@@ -3206,7 +3451,9 @@ function createPublishedCurriculumService(options = {}) {
 }
 export {
   LEARNER_IDENTITY_MESSAGE,
+  REQUEST_CATEGORIES,
   assertSecureSubmission,
+  categorizePlatformRequest,
   classifyActivityStateError,
   cleanAuthCallbackFromUrl,
   createActivityStateStore,
@@ -3231,6 +3478,8 @@ export {
   createSubmissionService,
   createSupabaseClient,
   derivePlatformState,
+  disablePlatformRequestDebug,
+  enablePlatformRequestDebug,
   getActivityStateLearnerBlock,
   isActivityStateLearnerBlocked,
   isHubEnrolledStatus,
@@ -3239,11 +3488,14 @@ export {
   isStaleAuthSessionError,
   mapPlatformError,
   reconcileActivityState,
+  recordPlatformRequest,
   recoverLearnerIdentityOnce,
   redact,
   resetActivityStateDedupe,
+  resetPlatformRequests,
   resolveAuthRedirectUrl,
   sanitizeActivityState,
+  snapshotPlatformRequests,
   toApiResponse
 };
 //# sourceMappingURL=advanced.esm.js.map

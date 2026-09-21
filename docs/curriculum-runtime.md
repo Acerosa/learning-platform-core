@@ -40,6 +40,12 @@ Application starts
         ↓
 PublishedCurriculumService.loadLatest(hubCode, courseKey)
         ↓
+Valid in-memory package from this JS session? → return it
+        ↓
+Valid hub/course cache? → api.published_curriculum metadata
+        ↓
+Cached package_version matches published version? → use cache
+        ↓
 PublicationResolver → api.published_curriculum_package
         ↓
 RuntimeSchemaLoader (schema 0.1.0 / package 0.1.0)
@@ -50,6 +56,11 @@ CacheManager write
         ↓
 Hub renders the returned package
 ```
+
+`refresh()` skips the in-memory short-circuit and re-checks metadata. A newly
+published `package_version` downloads the new package on the next `refresh()`
+or a new JS session `loadLatest()`. An already-open tab keeps the package it
+loaded until then.
 
 Optional `loadVersion` uses the same path with `p_package_version`. Latest
 loads omit that argument so the existing two-argument RPC remains valid.
@@ -63,9 +74,23 @@ lp.curriculum.cache.v1:{hubCode}:{courseKey}           # latest
 lp.curriculum.cache.v1:{hubCode}:{courseKey}:v:{ver}   # explicit version
 ```
 
-A successful live load overwrites that slot. `invalidate()` removes every slot
-for that hub and course. Corrupted JSON is ignored. Cache from another hub is
-never reused.
+There is no time-to-live. Invalidation is version-aware: the cache is reused
+only when `api.published_curriculum` reports the same `package_version` for
+that hub and course. A successful live load overwrites that slot.
+`invalidate()` removes every slot for that hub and course and drops the
+in-memory copy. Corrupted JSON is ignored. Cache from another hub is never
+reused. Learner progress, attempts, and activity-state drafts are never
+written to these keys.
+
+## Educator publish → learner visibility
+
+1. Staff publish a new immutable `package_version` in Central Admin.
+2. `api.published_curriculum` then returns that version for the hub/course.
+3. A learner who already has the previous version cached downloads the new
+   package on the next `loadLatest()` in a new JS session, or on
+   `curriculum.refresh()`.
+4. Same-tab `loadLatest()` after the first successful load keeps the current
+   package so route remounts do not repeat the full RPC.
 
 ## Error handling
 

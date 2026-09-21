@@ -112,6 +112,7 @@ export function createPlatform(options = {}, dependencies = {}) {
     if (authState.status === "signed-out") {
       hubEnrolmentContextSynced = false;
       onboarding.clearPending();
+      assignments.clearHubAssignmentCache();
       void activityStateSync.reset();
       state.transition("signed-out");
     }
