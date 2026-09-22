@@ -58,11 +58,18 @@ export function createLearnerApi({ client, schema = "api", logger } = {}) {
       ascending: false,
       filters: [{ column: "activity_key", value: activityKey }]
     }),
-    getResponses: (activityKey) => read("my_responses", {
-      order: "received_at",
-      ascending: false,
-      filters: [{ column: "activity_key", value: activityKey }]
-    }),
+    getResponses: (activityKeyOrOptions) => {
+      const extras = activityKeyOrOptions && typeof activityKeyOrOptions === "object" && !Array.isArray(activityKeyOrOptions)
+        ? activityKeyOrOptions
+        : { activityKey: activityKeyOrOptions };
+      const filters = [];
+      if (extras.attemptId) filters.push({ column: "attempt_id", value: extras.attemptId });
+      return read("my_responses", {
+        order: "marked_at",
+        ascending: false,
+        filters
+      });
+    },
     getProgress: (activityKey) => read("my_activity_progress", {
       filters: [{ column: "activity_key", value: activityKey }]
     }),

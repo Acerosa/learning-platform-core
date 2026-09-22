@@ -5,6 +5,7 @@ import {
   FORBIDDEN_SUBMISSION_FIELD,
   canonicalActivityVersion
 } from "../security/hub-security-baseline.js";
+import { SESSION_PENDING_CODE, waitForSessionIdentity } from "../auth/session-identity.js";
 
 const ALLOWED_FIELDS = ALLOWED_SUBMISSION_FIELDS;
 
@@ -122,6 +123,16 @@ export function createSubmissionService({
   }
 
   async function submit(input) {
+    if (auth && typeof auth.isSignedIn === "function") {
+      const identity = await waitForSessionIdentity(auth);
+      if (!identity.ready) {
+        throw new PlatformError({
+          code: identity.pending ? SESSION_PENDING_CODE : "AUTH_REQUIRED",
+          category: "authentication",
+          diagnostic: { status: identity.pending ? 503 : 401 }
+        });
+      }
+    }
     requireSignedIn();
     const payload = buildPayload(input);
     try {

@@ -180,6 +180,24 @@ test("J. unchanged drafts do not write twice", async () => {
   assert.equal(api.saves.length, 1);
 });
 
+test("empty save RPC row does not clobber the persistable fingerprint", async () => {
+  const saves = [];
+  const api = {
+    getActivityState: async () => [],
+    saveActivityState: async (payload) => {
+      saves.push(payload);
+      return [{}];
+    }
+  };
+  const store = storeFor(api);
+  store.save({ responses: { Q1: "A" } }, { immediate: true });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  store.save({ responses: { Q1: "A" } }, { immediate: true });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(saves.length, 1);
+  store.destroy();
+});
+
 test("K. a changed draft still writes", async () => {
   const api = countingApi();
   const store = storeFor(api);

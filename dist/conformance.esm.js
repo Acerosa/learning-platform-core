@@ -247,6 +247,15 @@ var evidence = Object.freeze({
   toApiResponse
 });
 
+// src/core/progress/activity-state-errors.js
+var ACTIVITY_STATE_TRANSIENT_BACKOFF_MS = Object.freeze([500, 1e3, 2e3, 4e3]);
+var LEARNER_IDENTITY_ERROR_CODES = Object.freeze([
+  "STUDENT_IDENTITY_NOT_FOUND",
+  "AUTHENTICATION_REQUIRED",
+  "AUTH_REQUIRED",
+  "PROFILE_REQUIRED"
+]);
+
 // src/core/submission/submission-service.js
 var ALLOWED_FIELDS = ALLOWED_SUBMISSION_FIELDS;
 function assertSecureSubmission(input) {

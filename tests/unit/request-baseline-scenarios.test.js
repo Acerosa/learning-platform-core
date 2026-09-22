@@ -84,7 +84,14 @@ function enrolledClient() {
         }
       }],
       get_activity_state: [],
-      save_activity_state: [{}],
+      save_activity_state: (payload) => [{
+        activity_key: payload.p_activity_key,
+        activity_version: payload.p_activity_version,
+        status: "in_progress",
+        state: payload.p_state,
+        updated_at: payload.p_client_updated_at,
+        revision: 1
+      }],
       submit_attempt: (payload) => [{ client_attempt_id: payload.p_client_attempt_id, idempotent: false }]
     }
   }));
@@ -242,4 +249,105 @@ test("SCENARIO F admin Hub Learning filter RPCs are view-only after the hub list
   assert.equal(categorizePlatformRequest("rpc", "list_hub_learning_result_filters"), "ADMIN");
   assert.equal(categorizePlatformRequest("rpc", "list_hub_learning_results"), "ADMIN");
   assert.equal(categorizePlatformRequest("rpc", "summarise_hub_learning_results"), "ADMIN");
+});
+
+test("GUARDRAIL: TOKEN_REFRESHED application REST is 0", async () => {
+  const client = enrolledClient();
+  const platform = makePlatform(client);
+  await platform.initialise();
+  await wait(0);
+  resetPlatformRequests();
+  client.emitAuthEvent("TOKEN_REFRESHED", {
+    access_token: "rotated",
+    user: { id: "auth-user" }
+  });
+  await wait(0);
+  const result = counts();
+  assert.equal(result.AUTH_BOOTSTRAP, 0);
+  assert.equal(result.ASSIGNMENTS, 0);
+  assert.equal(result.CURRICULUM, 0);
+  assert.equal(result.GET_ACTIVITY_STATE, 0);
+  assert.equal(result.SAVE_ACTIVITY_STATE, 0);
+  assert.equal(result.SUBMIT_ATTEMPT, 0);
+  assert.equal(result.PROGRESS, 0);
+  assert.equal(result.ADMIN, 0);
+  assert.equal(result.REALTIME, 1);
+  platform.destroy();
+});
+
+test("GUARDRAIL: week rerender additional get_activity_state is 0", async () => {
+  const client = enrolledClient();
+  const platform = makePlatform(client);
+  await platform.initialise();
+  await wait(0);
+  const storage = memoryStorage();
+  const keys = ["a", "b", "c", "d", "e"];
+  await Promise.all(keys.map((id) => (
+    platform.progress.createStore({
+      activityKey: `week-1-${id}`,
+      activityVersion: "1.0.0",
+      storage
+    }).hydrate()
+  )));
+  resetPlatformRequests();
+  await Promise.all(keys.map((id) => (
+    platform.progress.createStore({
+      activityKey: `week-1-${id}`,
+      activityVersion: "1.0.0",
+      storage
+    }).hydrate()
+  )));
+  const result = counts();
+  assert.equal(result.GET_ACTIVITY_STATE, 0);
+  assert.equal(result.SAVE_ACTIVITY_STATE, 0);
+  platform.destroy();
+});
+
+test("GUARDRAIL: same unchanged draft additional save is 0", async () => {
+  const client = enrolledClient();
+  const platform = makePlatform(client);
+  await platform.initialise();
+  await wait(0);
+  const store = platform.progress.createStore({
+    activityKey: "week-1-a",
+    activityVersion: "1.0.0",
+    storage: memoryStorage(),
+    debounceMs: 20
+  });
+  await store.hydrate();
+  store.save({ responses: { Q1: "same" } }, { immediate: true });
+  await wait(40);
+  resetPlatformRequests();
+  store.save({ responses: { Q1: "same" } }, { immediate: true });
+  store.save({ responses: { Q1: "same" } });
+  await wait(40);
+  const result = counts();
+  assert.equal(result.SAVE_ACTIVITY_STATE, 0);
+  assert.equal(result.GET_ACTIVITY_STATE, 0);
+  platform.destroy();
+});
+
+test("GUARDRAIL: trailing debounce coalesces rapid typing to one save", async () => {
+  const client = enrolledClient();
+  const platform = makePlatform(client);
+  await platform.initialise();
+  await wait(0);
+  resetPlatformRequests();
+  const store = platform.progress.createStore({
+    activityKey: "week-1-a",
+    activityVersion: "1.0.0",
+    storage: memoryStorage(),
+    debounceMs: 30
+  });
+  await store.hydrate();
+  resetPlatformRequests();
+  for (let i = 1; i <= 40; i += 1) {
+    store.save({ responses: { Q1: "x".repeat(i) } });
+  }
+  assert.equal(counts().SAVE_ACTIVITY_STATE, 0);
+  await wait(60);
+  const result = counts();
+  assert.equal(result.SAVE_ACTIVITY_STATE, 1);
+  assert.equal(result.GET_ACTIVITY_STATE, 0);
+  platform.destroy();
 });
