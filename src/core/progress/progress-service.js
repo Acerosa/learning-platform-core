@@ -16,7 +16,11 @@ export function createProgressService(api, options = {}) {
   return Object.freeze({
     getProgress: (activityKey) => api.getProgress(activityKey),
     getAttempts: (activityKey) => api.getAttempts(activityKey),
-    getResponses: (activityKey) => api.getResponses(activityKey),
+    getResponses: (activityKey, extras) => api.getResponses(
+      extras && typeof extras === "object"
+        ? { activityKey, ...extras }
+        : activityKey
+    ),
     getActivityState: async (activityKey, activityVersion) => firstRow(
       await api.getActivityState({
         activityKey,
@@ -43,6 +47,8 @@ export function createProgressService(api, options = {}) {
       storage: storeOptions.storage ?? options.storage,
       hubCode: options.hubCode,
       debounceMs: storeOptions.debounceMs,
+      persistWaitMs: storeOptions.persistWaitMs,
+      saveRetryBackoffMs: storeOptions.saveRetryBackoffMs,
       legacyKeys: storeOptions.legacyKeys,
       setTimeoutFn: storeOptions.setTimeoutFn,
       clearTimeoutFn: storeOptions.clearTimeoutFn,

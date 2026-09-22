@@ -52,11 +52,18 @@ export function isLearnerIdentityError(error) {
   return IDENTITY_CODE.test(errorText(error));
 }
 
-export function classifyActivityStateError(error) {
+export function classifyActivityStateError(error, options = {}) {
   if (!error) return "unknown";
   const status = Number(error?.status ?? error?.diagnostic?.status);
+  const code = activityStateErrorCode(error);
+  if (code === "SESSION_PENDING") return "transient";
+  const sessionReady = options.sessionReady;
+  if ((status === 401 || status === 403) && sessionReady === false) return "transient";
   if (status === 401 || status === 403) return "permanent";
-  if (isLearnerIdentityError(error)) return "permanent";
+  if (isLearnerIdentityError(error)) {
+    if (sessionReady === false) return "transient";
+    return "permanent";
+  }
   if (status === 429 || (status >= 500 && status <= 599) || status === 0) return "transient";
   if (TRANSIENT_HINT.test(errorText(error))) return "transient";
   // Generic failures (tests, unexpected) stay retryable without permanent lock.

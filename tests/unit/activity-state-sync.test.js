@@ -42,6 +42,8 @@ function countingApi(options = {}) {
         revision
       }];
     },
+    getAttempts: async () => [],
+    getResponses: async () => [],
     saveActivityState: async (payload) => {
       saves.push(payload);
       revision += 1;

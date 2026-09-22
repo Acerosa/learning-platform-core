@@ -575,11 +575,16 @@ var LearningPlatformCore = (() => {
         ascending: false,
         filters: [{ column: "activity_key", value: activityKey }]
       }),
-      getResponses: (activityKey) => read("my_responses", {
-        order: "received_at",
-        ascending: false,
-        filters: [{ column: "activity_key", value: activityKey }]
-      }),
+      getResponses: (activityKeyOrOptions) => {
+        const extras = activityKeyOrOptions && typeof activityKeyOrOptions === "object" && !Array.isArray(activityKeyOrOptions) ? activityKeyOrOptions : { activityKey: activityKeyOrOptions };
+        const filters = [];
+        if (extras.attemptId) filters.push({ column: "attempt_id", value: extras.attemptId });
+        return read("my_responses", {
+          order: "marked_at",
+          ascending: false,
+          filters
+        });
+      },
       getProgress: (activityKey) => read("my_activity_progress", {
         filters: [{ column: "activity_key", value: activityKey }]
       }),
@@ -1253,11 +1258,18 @@ var LearningPlatformCore = (() => {
     if (LEARNER_IDENTITY_ERROR_CODES.includes(code)) return true;
     return IDENTITY_CODE.test(errorText(error));
   }
-  function classifyActivityStateError(error) {
+  function classifyActivityStateError(error, options = {}) {
     if (!error) return "unknown";
     const status = Number(error?.status ?? error?.diagnostic?.status);
+    const code = activityStateErrorCode(error);
+    if (code === "SESSION_PENDING") return "transient";
+    const sessionReady = options.sessionReady;
+    if ((status === 401 || status === 403) && sessionReady === false) return "transient";
     if (status === 401 || status === 403) return "permanent";
-    if (isLearnerIdentityError(error)) return "permanent";
+    if (isLearnerIdentityError(error)) {
+      if (sessionReady === false) return "transient";
+      return "permanent";
+    }
     if (status === 429 || status >= 500 && status <= 599 || status === 0) return "transient";
     if (TRANSIENT_HINT.test(errorText(error))) return "transient";
     return "transient";
@@ -1270,6 +1282,75 @@ var LearningPlatformCore = (() => {
   }
   function sleep(ms, setTimeoutFn = globalThis.setTimeout.bind(globalThis)) {
     return new Promise((resolve) => setTimeoutFn(resolve, Math.max(0, Number(ms) || 0)));
+  }
+
+  // src/core/auth/session-identity.js
+  var SESSION_PENDING_CODE = "SESSION_PENDING";
+  var DEFAULT_PERSIST_AUTH_WAIT_MS = 8e3;
+  function sessionIdentityReady(auth) {
+    if (!auth || typeof auth.isSignedIn !== "function" || auth.isSignedIn() !== true) return false;
+    if (typeof auth.getSession !== "function") return true;
+    try {
+      const session = auth.getSession();
+      if (!session) return false;
+      if (session.user?.id) return true;
+      return false;
+    } catch {
+      return false;
+    }
+  }
+  function authStatus(auth) {
+    try {
+      const state = typeof auth?.getState === "function" ? auth.getState() : null;
+      return String(state?.status || "");
+    } catch {
+      return "";
+    }
+  }
+  function sessionObjectPresent(auth) {
+    if (typeof auth?.getSession !== "function") return false;
+    try {
+      return Boolean(auth.getSession());
+    } catch {
+      return false;
+    }
+  }
+  function identityRestoreInProgress(auth) {
+    if (!auth || typeof auth.isSignedIn !== "function") return false;
+    if (auth.isSignedIn() === true) return true;
+    const status = authStatus(auth);
+    if (status === "signing-in") return true;
+    return sessionObjectPresent(auth);
+  }
+  async function waitForSessionIdentity(auth, options = {}) {
+    const timeoutMs = Number.isFinite(options.timeoutMs) ? options.timeoutMs : DEFAULT_PERSIST_AUTH_WAIT_MS;
+    const setTimeoutFn = options.setTimeoutFn || globalThis.setTimeout.bind(globalThis);
+    if (!auth || typeof auth.isSignedIn !== "function") {
+      return { ready: false, signedIn: false, pending: false };
+    }
+    if (sessionIdentityReady(auth)) {
+      return { ready: true, signedIn: true, pending: false };
+    }
+    if (!identityRestoreInProgress(auth)) {
+      return { ready: false, signedIn: false, pending: false };
+    }
+    const started = Date.now();
+    let delay = 25;
+    while (Date.now() - started < timeoutMs) {
+      if (sessionIdentityReady(auth)) {
+        return { ready: true, signedIn: true, pending: false };
+      }
+      if (!identityRestoreInProgress(auth)) {
+        return { ready: false, signedIn: auth.isSignedIn() === true, pending: false };
+      }
+      await sleep(delay, setTimeoutFn);
+      delay = Math.min(delay * 2, 200);
+    }
+    return {
+      ready: sessionIdentityReady(auth),
+      signedIn: auth.isSignedIn() === true,
+      pending: !sessionIdentityReady(auth) && identityRestoreInProgress(auth)
+    };
   }
 
   // src/core/progress/activity-state-identity.js
@@ -1341,6 +1422,148 @@ var LearningPlatformCore = (() => {
     return entry.promise;
   }
 
+  // src/core/progress/activity-state-restore.js
+  function asList(value) {
+    if (Array.isArray(value)) return value;
+    if (value == null) return [];
+    return [value];
+  }
+  function parseTime(value) {
+    if (!value) return 0;
+    const time = value instanceof Date ? value.getTime() : Date.parse(String(value));
+    return Number.isFinite(time) ? time : 0;
+  }
+  function rowActivityKey(row) {
+    return String(row?.activity_key || row?.activityKey || "");
+  }
+  function rowActivityVersion(row) {
+    return canonicalActivityVersion(row?.activity_version || row?.activityVersion || "");
+  }
+  function rowAttemptId(row) {
+    return String(row?.attempt_id || row?.attemptId || row?.id || "");
+  }
+  function unwrapUiValue(payload) {
+    if (payload == null) return payload;
+    if (typeof payload !== "object") return payload;
+    if (Array.isArray(payload)) return payload;
+    if (typeof payload.optionId === "string") return payload.optionId;
+    if (typeof payload.text === "string") return payload.text;
+    if (typeof payload.sourceCode === "string") return payload.sourceCode;
+    if (Array.isArray(payload.optionIds)) return payload.optionIds;
+    if (Array.isArray(payload.itemIds)) return payload.itemIds;
+    if (Array.isArray(payload.pairs)) return payload;
+    return payload;
+  }
+  function applyResponseRow(responses, checked, row) {
+    const questionKey2 = String(row?.question_key || row?.questionKey || row?.question_id || row?.questionId || "").trim();
+    if (!questionKey2) return;
+    const payload = row?.response_payload !== void 0 ? row.response_payload : row?.responsePayload;
+    const colon = questionKey2.indexOf(":");
+    if (colon > 0 && payload && typeof payload === "object" && !Array.isArray(payload) && payload.categoryId) {
+      const parent = questionKey2.slice(0, colon);
+      const itemId = String(payload.itemId || questionKey2.slice(colon + 1));
+      const current = responses[parent] && typeof responses[parent] === "object" && !Array.isArray(responses[parent]) ? { ...responses[parent] } : {};
+      current[itemId] = payload.categoryId;
+      responses[parent] = current;
+      checked[parent] = true;
+      return;
+    }
+    responses[questionKey2] = unwrapUiValue(payload);
+    checked[questionKey2] = true;
+  }
+  function pickLatestCompletedAttempt(attempts, activityKey, activityVersion) {
+    const version = canonicalActivityVersion(activityVersion);
+    const key = String(activityKey || "");
+    const rows = asList(attempts).filter((row) => {
+      if (rowActivityKey(row) !== key) return false;
+      if (rowActivityVersion(row) !== version) return false;
+      return String(row?.status || "").toLowerCase() === "completed";
+    });
+    rows.sort((left, right) => {
+      const rightAt = parseTime(right.received_at || right.receivedAt || right.completed_at || right.completedAt);
+      const leftAt = parseTime(left.received_at || left.receivedAt || left.completed_at || left.completedAt);
+      return rightAt - leftAt;
+    });
+    return rows[0] || null;
+  }
+  function reconstructCompletedAttemptState(attempt, responses) {
+    if (!attempt) return null;
+    const attemptId = rowAttemptId(attempt);
+    const mapped = {};
+    const checked = {};
+    asList(responses).filter((row) => !attemptId || rowAttemptId(row) === attemptId).forEach((row) => applyResponseRow(mapped, checked, row));
+    if (!Object.keys(mapped).length) return null;
+    const completedAt = attempt.completed_at || attempt.completedAt || attempt.received_at || attempt.receivedAt || null;
+    const startedAt = attempt.client_started_at || attempt.clientStartedAt || attempt.received_at || attempt.receivedAt || null;
+    return {
+      responses: mapped,
+      checked,
+      completed: true,
+      submission: { status: "submitted" },
+      restoreSource: "completed-attempt",
+      startedAt,
+      completedAt,
+      updatedAt: completedAt || startedAt || (/* @__PURE__ */ new Date()).toISOString()
+    };
+  }
+  async function readCompletedAttemptSnapshot(api, activityKey, activityVersion) {
+    if (!api || typeof api.getAttempts !== "function") return null;
+    const attempt = pickLatestCompletedAttempt(
+      await api.getAttempts(activityKey),
+      activityKey,
+      activityVersion
+    );
+    if (!attempt) return null;
+    const attemptId = rowAttemptId(attempt);
+    let rows = [];
+    if (typeof api.getResponses === "function") {
+      try {
+        rows = asList(await api.getResponses({ attemptId, activityKey }));
+      } catch {
+        rows = asList(await api.getResponses(activityKey));
+      }
+    }
+    const snapshot = reconstructCompletedAttemptState(attempt, rows);
+    if (!snapshot) return null;
+    return {
+      state: snapshot,
+      updatedAt: snapshot.updatedAt,
+      completedAt: snapshot.completedAt,
+      source: "completed-attempt"
+    };
+  }
+  function isCompletedAttemptSnapshot(state) {
+    return Boolean(state && state.restoreSource === "completed-attempt");
+  }
+
+  // src/core/progress/activity-state-persist.js
+  var ACTIVITY_STATE_PERSIST_STATUS = Object.freeze({
+    idle: "idle",
+    saving: "saving",
+    synced: "synced",
+    pending: "pending",
+    failed: "failed",
+    retrievalFailed: "retrieval-failed"
+  });
+  var ACTIVITY_STATE_SAVE_RETRY_BACKOFF_MS = Object.freeze([2e3, 4e3, 8e3, 16e3]);
+  function persistStatusSnapshot({
+    status = ACTIVITY_STATE_PERSIST_STATUS.idle,
+    dirty = false,
+    saving = false,
+    retryPending = false,
+    lastRemoteSaveSucceeded = null,
+    remoteError = null
+  } = {}) {
+    return Object.freeze({
+      status,
+      dirty: Boolean(dirty),
+      saving: Boolean(saving),
+      retryPending: Boolean(retryPending),
+      lastRemoteSaveSucceeded,
+      remoteError: remoteError ? String(remoteError) : null
+    });
+  }
+
   // src/core/progress/activity-state.js
   var ACTIVITY_STATE_CACHE_PREFIX = "learning-platform.activity-state.v1";
   var FORBIDDEN_KEY = /^(score|max_score|maxscore|awarded_score|awardedscore|is_correct|iscorrect|marking_source|markingsource|total_score|totalscore|percentage|correctvalues|correct_values|correctoptionid|correct_option_id|correctcategoryid|correct_category_id|correctmapping|correct_mapping|answerkey|answer_key|learnerid|learner_id|studentid|student_id|studentnumber|student_number|enrolmentid|enrolment_id|assignmentid|assignment_id|attemptnumber|attempt_number|groupid|group_id|firstname|first_name|surname|email)$/i;
@@ -1373,16 +1596,21 @@ var LearningPlatformCore = (() => {
     if (state.submission && state.submission.status === "submitted") return true;
     return false;
   }
-  function parseTime(value) {
+  function parseTime2(value) {
     if (!value) return 0;
     const time = value instanceof Date ? value.getTime() : Date.parse(String(value));
     return Number.isFinite(time) ? time : 0;
   }
+  function wrappedState(entry) {
+    if (entry == null || typeof entry !== "object") return null;
+    if (Object.prototype.hasOwnProperty.call(entry, "state")) return entry.state || null;
+    return entry;
+  }
   function reconcileActivityState(local, server) {
-    const localState = local?.state || local || null;
-    const serverState = server?.state || null;
-    const localAt = parseTime(local?.updatedAt || localState?.updatedAt);
-    const serverAt = parseTime(server?.updatedAt || serverState?.updatedAt);
+    const localState = wrappedState(local);
+    const serverState = wrappedState(server);
+    const localAt = parseTime2(local?.updatedAt || localState?.updatedAt);
+    const serverAt = parseTime2(server?.updatedAt || serverState?.updatedAt);
     const localWork = activityStateHasWork(localState);
     const serverWork = activityStateHasWork(serverState);
     if (isCompletedActivityState(localState) && !serverWork) {
@@ -1419,7 +1647,9 @@ var LearningPlatformCore = (() => {
     "completedAt",
     "pendingSave",
     "cachedAt",
-    "clientUpdatedAt"
+    "clientUpdatedAt",
+    "restoreSource",
+    "serverBacked"
   ]);
   var ACTIVITY_STATE_INVALIDATION_EVENT = "activity_state_invalidated";
   var ACTIVITY_STATE_INVALIDATION_COALESCE_MS = 50;
@@ -1618,9 +1848,13 @@ var LearningPlatformCore = (() => {
     activityKey,
     activityVersion,
     debounceMs = 600,
+    persistWaitMs,
+    saveRetryBackoffMs = ACTIVITY_STATE_SAVE_RETRY_BACKOFF_MS,
     legacyKeys = [],
     setTimeoutFn = globalThis.setTimeout.bind(globalThis),
-    clearTimeoutFn = globalThis.clearTimeout.bind(globalThis)
+    clearTimeoutFn = globalThis.clearTimeout.bind(globalThis),
+    addEventListenerFn,
+    removeEventListenerFn
   } = {}) {
     const key = typeof activityKey === "string" ? activityKey.trim() : "";
     const version = canonicalActivityVersion(activityVersion);
@@ -1637,6 +1871,16 @@ var LearningPlatformCore = (() => {
     let coalesceTimer = null;
     let coalesceResolvers = [];
     const listeners2 = /* @__PURE__ */ new Set();
+    const persistListeners = /* @__PURE__ */ new Set();
+    let persistPhase = ACTIVITY_STATE_PERSIST_STATUS.idle;
+    let saving = false;
+    let retryTimer = null;
+    let retryAttempt = 0;
+    let lastRemoteSaveSucceeded = null;
+    let lastRemoteError = null;
+    let saveInFlightFingerprint = null;
+    let retrievalFailed = false;
+    const retryBackoff = Array.isArray(saveRetryBackoffMs) && saveRetryBackoffMs.length ? saveRetryBackoffMs : ACTIVITY_STATE_SAVE_RETRY_BACKOFF_MS;
     function cacheKey() {
       return activityStateCacheKey(key, version, learnerCacheKey(auth));
     }
@@ -1654,8 +1898,8 @@ var LearningPlatformCore = (() => {
       });
       return candidates.reduce((best, item2) => {
         if (!best) return item2;
-        const bestAt = parseTime(best.updatedAt);
-        const itemAt = parseTime(item2.updatedAt);
+        const bestAt = parseTime2(best.updatedAt);
+        const itemAt = parseTime2(item2.updatedAt);
         if (itemAt > bestAt) return item2;
         if (itemAt === bestAt && activityStateHasWork(item2) && !activityStateHasWork(best)) return item2;
         return best;
@@ -1668,10 +1912,13 @@ var LearningPlatformCore = (() => {
       if (!record) return;
       const revision = Number(record.revision) || 0;
       if (revision > knownRevision) knownRevision = revision;
-      const updated = parseTime(record.updatedAt);
+      const updated = parseTime2(record.updatedAt);
       if (updated > knownUpdatedAt) knownUpdatedAt = updated;
       if (record.state) {
-        writeFingerprints.set(readDedupeKey(), persistableActivityStateFingerprint(record.state));
+        const next = persistableActivityStateFingerprint(record.state);
+        if (next !== persistableActivityStateFingerprint({})) {
+          writeFingerprints.set(readDedupeKey(), next);
+        }
       }
     }
     function isDirty() {
@@ -1684,7 +1931,7 @@ var LearningPlatformCore = (() => {
     function eventIsCurrentOrOlder(event = {}) {
       const revision = Number(event.revision) || 0;
       if (revision && knownRevision && revision <= knownRevision) return true;
-      const updated = parseTime(event.updatedAt);
+      const updated = parseTime2(event.updatedAt);
       if (!revision && updated && knownUpdatedAt && updated <= knownUpdatedAt) return true;
       return false;
     }
@@ -1701,6 +1948,71 @@ var LearningPlatformCore = (() => {
         } catch {
         }
       });
+    }
+    function persistSnapshot() {
+      return persistStatusSnapshot({
+        status: persistPhase,
+        dirty: isDirty(),
+        saving,
+        retryPending: retryTimer != null || dirty && persistPhase === ACTIVITY_STATE_PERSIST_STATUS.failed,
+        lastRemoteSaveSucceeded,
+        remoteError: lastRemoteError
+      });
+    }
+    function setPersistPhase(next, extras = {}) {
+      if (extras.remoteError !== void 0) lastRemoteError = extras.remoteError;
+      if (extras.lastRemoteSaveSucceeded !== void 0) {
+        lastRemoteSaveSucceeded = extras.lastRemoteSaveSucceeded;
+      }
+      persistPhase = next;
+      persistListeners.forEach((listener) => {
+        try {
+          listener(persistSnapshot());
+        } catch {
+        }
+      });
+    }
+    function subscribePersistStatus(listener) {
+      if (typeof listener !== "function") return () => {
+      };
+      persistListeners.add(listener);
+      try {
+        listener(persistSnapshot());
+      } catch {
+      }
+      return () => persistListeners.delete(listener);
+    }
+    function currentPersistableFingerprint() {
+      return persistableActivityStateFingerprint(readLocal() || pendingState || {});
+    }
+    function persistableForRemote(state) {
+      const sanitized = sanitizeActivityState(state || {});
+      const next = { ...sanitized };
+      delete next.restoreSource;
+      delete next.serverBacked;
+      delete next.pendingSave;
+      return next;
+    }
+    function cancelRetry() {
+      if (retryTimer != null) {
+        clearTimeoutFn(retryTimer);
+        retryTimer = null;
+      }
+    }
+    function scheduleRetry() {
+      if (destroyed || !dirty) return;
+      if (retryTimer != null || saving) return;
+      if (retryAttempt >= retryBackoff.length) {
+        setPersistPhase(ACTIVITY_STATE_PERSIST_STATUS.failed);
+        return;
+      }
+      const wait = retryBackoff[Math.min(retryAttempt, retryBackoff.length - 1)] || 2e3;
+      retryAttempt += 1;
+      retryTimer = setTimeoutFn(() => {
+        retryTimer = null;
+        if (!destroyed && isDirty()) flush();
+      }, wait);
+      setPersistPhase(ACTIVITY_STATE_PERSIST_STATUS.failed);
     }
     function maybeApplyDeferredRemote() {
       const pending = pendingRemoteRevision;
@@ -1753,12 +2065,24 @@ var LearningPlatformCore = (() => {
     }
     async function pushServer(state) {
       if (!signedIn(auth) || typeof api?.saveActivityState !== "function") return null;
+      const identity = await waitForSessionIdentity(auth, {
+        timeoutMs: persistWaitMs,
+        setTimeoutFn
+      });
+      if (!identity.ready) {
+        dirty = true;
+        writeLocal({ ...state, pendingSave: true });
+        lastRemoteError = identity.pending ? SESSION_PENDING_CODE : "AUTH_REQUIRED";
+        scheduleRetry();
+        return null;
+      }
       syncLearnerDedupeScope(auth);
-      const sanitized = sanitizeActivityState(state || {});
+      const sanitized = persistableForRemote(state);
       const updatedAt = state?.updatedAt || (/* @__PURE__ */ new Date()).toISOString();
-      const dedupeKey = readDedupeKey();
-      const fingerprint = persistableActivityStateFingerprint(sanitized);
-      if (writeFingerprints.get(dedupeKey) === fingerprint) {
+      const sentFingerprint = persistableActivityStateFingerprint(sanitized);
+      if (writeFingerprints.get(readDedupeKey()) === sentFingerprint && !dirty) {
+        lastRemoteSaveSucceeded = true;
+        setPersistPhase(ACTIVITY_STATE_PERSIST_STATUS.synced, { lastRemoteSaveSucceeded: true, remoteError: null });
         return {
           activityKey: key,
           activityVersion: version,
@@ -1769,6 +2093,9 @@ var LearningPlatformCore = (() => {
           completedAt: state?.completedAt || null
         };
       }
+      saving = true;
+      saveInFlightFingerprint = sentFingerprint;
+      setPersistPhase(ACTIVITY_STATE_PERSIST_STATUS.saving);
       try {
         const saved = asRecord(firstRow2(await api.saveActivityState({
           activityKey: key,
@@ -1777,17 +2104,36 @@ var LearningPlatformCore = (() => {
           clientUpdatedAt: updatedAt,
           hubCode
         })));
-        writeFingerprints.set(dedupeKey, fingerprint);
+        const currentFingerprint = currentPersistableFingerprint();
+        if (currentFingerprint !== sentFingerprint) {
+          dirty = true;
+          setPersistPhase(ACTIVITY_STATE_PERSIST_STATUS.pending, { lastRemoteSaveSucceeded: false });
+          return saved;
+        }
+        writeFingerprints.set(readDedupeKey(), sentFingerprint);
         rememberPersisted(saved);
         dirty = false;
+        retryAttempt = 0;
+        lastRemoteSaveSucceeded = true;
+        lastRemoteError = null;
         if (saved?.state) writeLocal({ ...saved.state, updatedAt: saved.updatedAt, startedAt: saved.startedAt });
+        setPersistPhase(ACTIVITY_STATE_PERSIST_STATUS.synced, { lastRemoteSaveSucceeded: true, remoteError: null });
         maybeApplyDeferredRemote();
         return saved;
       } catch (error) {
-        writeFingerprints.delete(dedupeKey);
+        writeFingerprints.delete(readDedupeKey());
         dirty = true;
+        lastRemoteSaveSucceeded = false;
+        lastRemoteError = String(error?.code || error?.message || "SAVE_FAILED");
         writeLocal({ ...state, updatedAt, pendingSave: true });
+        setPersistPhase(ACTIVITY_STATE_PERSIST_STATUS.failed, {
+          lastRemoteSaveSucceeded: false,
+          remoteError: lastRemoteError
+        });
         throw error;
+      } finally {
+        saving = false;
+        saveInFlightFingerprint = null;
       }
     }
     function cancelPending() {
@@ -1802,14 +2148,26 @@ var LearningPlatformCore = (() => {
         clearTimeoutFn(pendingTimer);
         pendingTimer = null;
       }
-      if (!pendingState) return Promise.resolve(null);
-      const next = pendingState;
+      if (saving) return Promise.resolve(null);
+      const next = pendingState || (dirty ? readLocal() : null);
+      if (!next || isCompletedAttemptSnapshot(next)) return Promise.resolve(null);
       pendingState = null;
-      return pushServer(next).catch(() => next);
+      setPersistPhase(ACTIVITY_STATE_PERSIST_STATUS.saving);
+      return pushServer(next).then((saved) => {
+        if (pendingState && persistableActivityStateFingerprint(pendingState) !== persistableActivityStateFingerprint(next)) {
+          return flush();
+        }
+        return saved;
+      }).catch(() => {
+        scheduleRetry();
+        return next;
+      });
     }
     function save(state, options = {}) {
       syncLearnerDedupeScope(auth);
       const sanitized = sanitizeActivityState(state || {});
+      delete sanitized.restoreSource;
+      delete sanitized.serverBacked;
       const fingerprint = persistableActivityStateFingerprint(sanitized);
       const stamped = {
         ...sanitized,
@@ -1820,15 +2178,20 @@ var LearningPlatformCore = (() => {
       if (!unchanged) dirty = true;
       if (!signedIn(auth) || options.remote === false) {
         if (options.remote === false) cancelPending();
+        if (!unchanged) setPersistPhase(ACTIVITY_STATE_PERSIST_STATUS.pending);
         return stamped;
       }
       if (unchanged) {
         cancelPending();
         dirty = false;
+        retryAttempt = 0;
+        cancelRetry();
+        setPersistPhase(ACTIVITY_STATE_PERSIST_STATUS.synced, { lastRemoteSaveSucceeded: true, remoteError: null });
         maybeApplyDeferredRemote();
         return stamped;
       }
       pendingState = stamped;
+      setPersistPhase(ACTIVITY_STATE_PERSIST_STATUS.pending);
       if (options.immediate) {
         flush();
         return stamped;
@@ -1848,14 +2211,15 @@ var LearningPlatformCore = (() => {
     }
     async function readServerStateWithPolicy() {
       const learnerKey = learnerCacheKey(auth);
+      const ready = sessionIdentityReady(auth);
       let attempt = 0;
       let identityRetried = false;
       for (; ; ) {
         try {
           return await readServerState();
         } catch (error) {
-          const kind = classifyActivityStateError(error);
-          if (kind === "permanent" || isLearnerIdentityError(error)) {
+          const kind = classifyActivityStateError(error, { sessionReady: ready });
+          if (kind === "permanent" || ready && isLearnerIdentityError(error)) {
             if (!identityRetried && isLearnerIdentityError(error)) {
               identityRetried = true;
               const recovery = await recoverLearnerIdentityOnce({ api, learnerKey });
@@ -1878,10 +2242,30 @@ var LearningPlatformCore = (() => {
         }
       }
     }
+    function localPendingWins(local, remoteRecord) {
+      if (!activityStateHasWork(local)) return false;
+      const remoteState = remoteRecord?.state || remoteRecord;
+      if (dirty || local?.pendingSave === true) return true;
+      if (!activityStateHasWork(remoteState)) return true;
+      const remoteAt = parseTime2(remoteRecord?.updatedAt || remoteState?.updatedAt);
+      return parseTime2(local.updatedAt) > remoteAt;
+    }
     async function hydrate2(preferredLocal, options = {}) {
       const local = readLocal(preferredLocal);
       syncLearnerDedupeScope(auth);
       if (!signedIn(auth) || typeof api?.getActivityState !== "function") {
+        if (local) writeLocal(local);
+        return local;
+      }
+      const identity = await waitForSessionIdentity(auth, {
+        timeoutMs: persistWaitMs,
+        setTimeoutFn
+      });
+      if (!identity.ready) {
+        retrievalFailed = Boolean(identity.pending);
+        if (identity.pending) {
+          setPersistPhase(ACTIVITY_STATE_PERSIST_STATUS.retrievalFailed, { remoteError: SESSION_PENDING_CODE });
+        }
         if (local) writeLocal(local);
         return local;
       }
@@ -1893,7 +2277,7 @@ var LearningPlatformCore = (() => {
       const fresh = Boolean(options && options.fresh);
       const dedupeKey = readDedupeKey();
       if (fresh) completedReads.delete(dedupeKey);
-      else if (completedReads.has(dedupeKey)) {
+      else if (completedReads.has(dedupeKey) && !retrievalFailed) {
         return local;
       }
       if (inflightReads.has(dedupeKey)) {
@@ -1904,7 +2288,7 @@ var LearningPlatformCore = (() => {
         if (isActivityStateLearnerBlocked(learnerKey)) {
           return readLocal(preferredLocal);
         }
-        if (!fresh && completedReads.has(dedupeKey)) {
+        if (!fresh && completedReads.has(dedupeKey) && !retrievalFailed) {
           return readLocal(preferredLocal);
         }
         if (inflightReads.has(dedupeKey)) {
@@ -1920,31 +2304,79 @@ var LearningPlatformCore = (() => {
         try {
           server = await readServerStateWithPolicy();
         } catch (error) {
+          retrievalFailed = true;
+          setPersistPhase(ACTIVITY_STATE_PERSIST_STATUS.retrievalFailed, {
+            remoteError: String(error?.code || error?.message || "GET_FAILED")
+          });
           throw error;
         }
-        completedReads.add(dedupeKey);
+        retrievalFailed = false;
         if (server) rememberPersisted(server);
-        const resolved = reconcileActivityState(
-          { state: local, updatedAt: local?.updatedAt },
-          server ? { state: server.state, updatedAt: server.updatedAt } : null
-        );
-        if (resolved.state) {
+        let completedSnapshot = null;
+        if (!activityStateHasWork(server?.state)) {
+          try {
+            completedSnapshot = await readCompletedAttemptSnapshot(api, key, version);
+          } catch (error) {
+            retrievalFailed = true;
+            setPersistPhase(ACTIVITY_STATE_PERSIST_STATUS.retrievalFailed, {
+              remoteError: String(error?.code || error?.message || "ATTEMPT_RESTORE_FAILED")
+            });
+            throw error;
+          }
+        }
+        if (!retrievalFailed) completedReads.add(dedupeKey);
+        const inProgress = server && activityStateHasWork(server.state) ? { state: server.state, updatedAt: server.updatedAt } : null;
+        const completed = completedSnapshot && activityStateHasWork(completedSnapshot.state) ? completedSnapshot : null;
+        let resolved;
+        if (localPendingWins(local, inProgress || completed)) {
+          resolved = {
+            state: local,
+            updatedAt: local?.updatedAt,
+            source: "local-pending",
+            migrate: !isCompletedAttemptSnapshot(local)
+          };
+        } else if (inProgress) {
+          resolved = reconcileActivityState(
+            { state: local, updatedAt: local?.updatedAt },
+            inProgress
+          );
+        } else if (completed) {
+          resolved = {
+            state: sanitizeActivityState(completed.state),
+            updatedAt: completed.updatedAt,
+            source: "completed-attempt",
+            migrate: false
+          };
+        } else {
+          resolved = reconcileActivityState(
+            { state: local, updatedAt: local?.updatedAt },
+            null
+          );
+        }
+        if (activityStateHasWork(resolved.state) || resolved.source === "completed-attempt") {
           const next = {
             ...resolved.state,
             updatedAt: resolved.updatedAt || resolved.state.updatedAt || (/* @__PURE__ */ new Date()).toISOString(),
             startedAt: resolved.state.startedAt || server?.startedAt || resolved.state.startedAt
           };
           writeLocal(next);
-          if (resolved.source === "server") dirty = false;
-          if (resolved.migrate) {
+          if (resolved.source === "server" || resolved.source === "completed-attempt") {
+            dirty = false;
+            setPersistPhase(ACTIVITY_STATE_PERSIST_STATUS.synced, { lastRemoteSaveSucceeded: true, remoteError: null });
+          }
+          if (resolved.migrate && !isCompletedAttemptSnapshot(next)) {
             try {
               await pushServer(next);
             } catch {
+              scheduleRetry();
             }
           }
-          if (options.remote && resolved.source === "server") notifyRemote(next);
+          if (options.remote && (resolved.source === "server" || resolved.source === "completed-attempt")) {
+            notifyRemote(next);
+          }
           return next;
         }
+        setPersistPhase(ACTIVITY_STATE_PERSIST_STATUS.idle, { lastRemoteSaveSucceeded: true, remoteError: null });
         return null;
       })();
       inflightReads.set(dedupeKey, pending);
@@ -1959,15 +2391,18 @@ var LearningPlatformCore = (() => {
     }
     async function clear(clearOptions = {}) {
       cancelPending();
+      cancelRetry();
       invalidateActivityStateReads({
         learnerKey: learnerCacheKey(auth),
         activityKey: key,
         activityVersion: version
       });
       dirty = false;
+      retrievalFailed = false;
       knownRevision = 0;
       knownUpdatedAt = 0;
       pendingRemoteRevision = 0;
+      setPersistPhase(ACTIVITY_STATE_PERSIST_STATUS.idle, { lastRemoteSaveSucceeded: null, remoteError: null });
       if (clearOptions.local !== false) {
         removeKey(storage, cacheKey());
         (Array.isArray(legacyKeys) ? legacyKeys : []).forEach((legacyKey) => removeKey(storage, legacyKey));
@@ -1979,9 +2414,16 @@ var LearningPlatformCore = (() => {
         }
       }
     }
+    function onOnline() {
+      if (destroyed || !isDirty()) return;
+      retryAttempt = Math.min(retryAttempt, 1);
+      cancelRetry();
+      flush();
+    }
     function destroy() {
       destroyed = true;
-      if (pendingTimer != null) clearTimeoutFn(pendingTimer);
+      cancelPending();
+      cancelRetry();
       if (coalesceTimer != null) {
         clearTimeoutFn(coalesceTimer);
         coalesceTimer = null;
@@ -1990,10 +2432,18 @@ var LearningPlatformCore = (() => {
         resolvers.forEach((fn) => fn(null));
       }
       listeners2.clear();
+      persistListeners.clear();
       storeRegistry.delete(registryKey);
       if (typeof globalThis.removeEventListener === "function") {
         globalThis.removeEventListener("pagehide", onHide);
         globalThis.removeEventListener("beforeunload", onHide);
+        globalThis.removeEventListener("online", onOnline);
+      }
+      if (typeof removeEventListenerFn === "function") {
+        try {
+          removeEventListenerFn("online", onOnline);
+        } catch {
+        }
       }
       if (visibilityNode && typeof visibilityNode.removeEventListener === "function") {
         visibilityNode.removeEventListener("visibilitychange", onVisibility);
@@ -2012,6 +2462,13 @@ var LearningPlatformCore = (() => {
     if (typeof globalThis.addEventListener === "function") {
       globalThis.addEventListener("pagehide", onHide);
       globalThis.addEventListener("beforeunload", onHide);
+      globalThis.addEventListener("online", onOnline);
+    }
+    if (typeof addEventListenerFn === "function") {
+      try {
+        addEventListenerFn("online", onOnline);
+      } catch {
+      }
     }
     if (visibilityNode) {
       visibilityNode.addEventListener("visibilitychange", onVisibility);
@@ -2026,8 +2483,14 @@ var LearningPlatformCore = (() => {
       clear,
       destroy,
       subscribe,
+      subscribePersistStatus,
       handleRemoteInvalidation,
       isDirty,
+      isSaving: () => saving,
+      lastRemoteSaveSucceeded: () => lastRemoteSaveSucceeded,
+      retryPending: () => retryTimer != null,
+      remoteError: () => lastRemoteError,
+      persistStatus: persistSnapshot,
       markDirty,
       knownRevision: () => knownRevision,
       pendingRemoteRevision: () => pendingRemoteRevision,
@@ -2044,7 +2507,9 @@ var LearningPlatformCore = (() => {
     return Object.freeze({
       getProgress: (activityKey) => api.getProgress(activityKey),
       getAttempts: (activityKey) => api.getAttempts(activityKey),
-      getResponses: (activityKey) => api.getResponses(activityKey),
+      getResponses: (activityKey, extras) => api.getResponses(
+        extras && typeof extras === "object" ? { activityKey, ...extras } : activityKey
+      ),
       getActivityState: async (activityKey, activityVersion) => firstRow3(
         await api.getActivityState({
           activityKey,
@@ -2071,6 +2536,8 @@ var LearningPlatformCore = (() => {
         storage: storeOptions.storage ?? options.storage,
         hubCode: options.hubCode,
         debounceMs: storeOptions.debounceMs,
+        persistWaitMs: storeOptions.persistWaitMs,
+        saveRetryBackoffMs: storeOptions.saveRetryBackoffMs,
         legacyKeys: storeOptions.legacyKeys,
         setTimeoutFn: storeOptions.setTimeoutFn,
         clearTimeoutFn: storeOptions.clearTimeoutFn,
@@ -2671,6 +3138,16 @@ var LearningPlatformCore = (() => {
       });
     }
     async function submit(input) {
+      if (auth && typeof auth.isSignedIn === "function") {
+        const identity = await waitForSessionIdentity(auth);
+        if (!identity.ready) {
+          throw new PlatformError({
+            code: identity.pending ? SESSION_PENDING_CODE : "AUTH_REQUIRED",
+            category: "authentication",
+            diagnostic: { status: identity.pending ? 503 : 401 }
+          });
+        }
+      }
       requireSignedIn();
       const payload = buildPayload(input);
       try {

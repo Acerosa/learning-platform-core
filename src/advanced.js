@@ -30,7 +30,15 @@ export {
   LEARNER_IDENTITY_MESSAGE,
   getActivityStateLearnerBlock,
   isActivityStateLearnerBlocked,
-  recoverLearnerIdentityOnce
+  recoverLearnerIdentityOnce,
+  pickLatestCompletedAttempt,
+  reconstructCompletedAttemptState,
+  isCompletedAttemptSnapshot,
+  ACTIVITY_STATE_PERSIST_STATUS,
+  persistStatusSnapshot,
+  sessionIdentityReady,
+  waitForSessionIdentity,
+  SESSION_PENDING_CODE
 } from "./core/progress/activity-state.js";
 export { createActivityStateSync } from "./core/progress/activity-state-sync.js";
 export { createSubmissionService, assertSecureSubmission } from "./core/submission/submission-service.js";

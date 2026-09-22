@@ -2,6 +2,35 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## Unreleased
+
+## 0.2.26 - 2026-09-22
+
+### Added
+
+- Activity hydrate restores the learner's latest same-key, same-version completed
+  attempt and `my_responses` when `get_activity_state` has no in-progress draft.
+  Restore is read-only: it does not save a draft or submit an attempt.
+- Store persistence status (`persistStatus`, `subscribePersistStatus`, `isSaving`,
+  `lastRemoteSaveSucceeded`, `retryPending`, `remoteError`) so hubs can show
+  save/sync state without a hub-specific monitor.
+- Bounded remote-save retry on backoff and the browser `online` event. Only the
+  acknowledged fingerprint is marked synced, so an older response cannot clean a
+  newer local revision.
+- Phase 4 request-count guardrail tests: `TOKEN_REFRESHED` application REST is 0,
+  week rerender extra `get_activity_state` is 0, identical persistable draft extra
+  `save_activity_state` is 0, and trailing debounce coalesces rapid typing to one
+  write.
+- `rememberPersisted` no longer replaces a real persistable write fingerprint with
+  an empty `{}` row.
+
+### Fixed
+
+- A failed `get_activity_state` is no longer treated as “no work” or interned.
+  Session restoration (signed-in without a user id yet) is transient and does
+  not permanently block reads. Unsynchronised local work wins over an older
+  completed snapshot.
+
 ## 0.2.25 - 2026-09-21
 
 ### Changed

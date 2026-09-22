@@ -1,6 +1,11 @@
 import { PlatformError } from "../errors/platform-error.js";
 import { canonicalActivityVersion } from "../security/hub-security-baseline.js";
 import {
+  SESSION_PENDING_CODE,
+  sessionIdentityReady,
+  waitForSessionIdentity
+} from "../auth/session-identity.js";
+import {
   ACTIVITY_STATE_TRANSIENT_MAX_ATTEMPTS,
   classifyActivityStateError,
   isLearnerIdentityError,
@@ -14,6 +19,15 @@ import {
   getActivityStateIdentityRecoveryState,
   subscribeActivityStateIdentityRecovery
 } from "./activity-state-identity.js";
+import {
+  isCompletedAttemptSnapshot,
+  readCompletedAttemptSnapshot
+} from "./activity-state-restore.js";
+import {
+  ACTIVITY_STATE_PERSIST_STATUS,
+  ACTIVITY_STATE_SAVE_RETRY_BACKOFF_MS,
+  persistStatusSnapshot
+} from "./activity-state-persist.js";
 
 export {
   classifyActivityStateError,
@@ -26,6 +40,20 @@ export {
   getActivityStateIdentityRecoveryState,
   subscribeActivityStateIdentityRecovery
 } from "./activity-state-identity.js";
+export {
+  pickLatestCompletedAttempt,
+  reconstructCompletedAttemptState,
+  isCompletedAttemptSnapshot
+} from "./activity-state-restore.js";
+export {
+  ACTIVITY_STATE_PERSIST_STATUS,
+  persistStatusSnapshot
+} from "./activity-state-persist.js";
+export {
+  sessionIdentityReady,
+  waitForSessionIdentity,
+  SESSION_PENDING_CODE
+} from "../auth/session-identity.js";
 
 export const ACTIVITY_STATE_CACHE_PREFIX = "learning-platform.activity-state.v1";
 
@@ -69,9 +97,15 @@ function parseTime(value) {
   return Number.isFinite(time) ? time : 0;
 }
 
+function wrappedState(entry) {
+  if (entry == null || typeof entry !== "object") return null;
+  if (Object.prototype.hasOwnProperty.call(entry, "state")) return entry.state || null;
+  return entry;
+}
+
 export function reconcileActivityState(local, server) {
-  const localState = local?.state || local || null;
-  const serverState = server?.state || null;
+  const localState = wrappedState(local);
+  const serverState = wrappedState(server);
   const localAt = parseTime(local?.updatedAt || localState?.updatedAt);
   const serverAt = parseTime(server?.updatedAt || serverState?.updatedAt);
   const localWork = activityStateHasWork(localState);
@@ -114,7 +148,9 @@ const TRANSIENT_PERSIST_KEYS = new Set([
   "completedAt",
   "pendingSave",
   "cachedAt",
-  "clientUpdatedAt"
+  "clientUpdatedAt",
+  "restoreSource",
+  "serverBacked"
 ]);
 
 export const ACTIVITY_STATE_INVALIDATION_EVENT = "activity_state_invalidated";
@@ -335,9 +371,13 @@ export function createActivityStateStore({
   activityKey,
   activityVersion,
   debounceMs = 600,
+  persistWaitMs,
+  saveRetryBackoffMs = ACTIVITY_STATE_SAVE_RETRY_BACKOFF_MS,
   legacyKeys = [],
   setTimeoutFn = globalThis.setTimeout.bind(globalThis),
-  clearTimeoutFn = globalThis.clearTimeout.bind(globalThis)
+  clearTimeoutFn = globalThis.clearTimeout.bind(globalThis),
+  addEventListenerFn,
+  removeEventListenerFn
 } = {}) {
   const key = typeof activityKey === "string" ? activityKey.trim() : "";
   const version = canonicalActivityVersion(activityVersion);
@@ -355,6 +395,18 @@ export function createActivityStateStore({
   let coalesceTimer = null;
   let coalesceResolvers = [];
   const listeners = new Set();
+  const persistListeners = new Set();
+  let persistPhase = ACTIVITY_STATE_PERSIST_STATUS.idle;
+  let saving = false;
+  let retryTimer = null;
+  let retryAttempt = 0;
+  let lastRemoteSaveSucceeded = null;
+  let lastRemoteError = null;
+  let saveInFlightFingerprint = null;
+  let retrievalFailed = false;
+  const retryBackoff = Array.isArray(saveRetryBackoffMs) && saveRetryBackoffMs.length
+    ? saveRetryBackoffMs
+    : ACTIVITY_STATE_SAVE_RETRY_BACKOFF_MS;
 
   function cacheKey() {
     return activityStateCacheKey(key, version, learnerCacheKey(auth));
@@ -394,7 +446,10 @@ export function createActivityStateStore({
     const updated = parseTime(record.updatedAt);
     if (updated > knownUpdatedAt) knownUpdatedAt = updated;
     if (record.state) {
-      writeFingerprints.set(readDedupeKey(), persistableActivityStateFingerprint(record.state));
+      const next = persistableActivityStateFingerprint(record.state);
+      if (next !== persistableActivityStateFingerprint({})) {
+        writeFingerprints.set(readDedupeKey(), next);
+      }
     }
   }
 
@@ -425,6 +480,71 @@ export function createActivityStateStore({
     listeners.forEach((listener) => {
       try { listener(state); } catch {}
     });
+  }
+
+  function persistSnapshot() {
+    return persistStatusSnapshot({
+      status: persistPhase,
+      dirty: isDirty(),
+      saving,
+      retryPending: retryTimer != null || (dirty && persistPhase === ACTIVITY_STATE_PERSIST_STATUS.failed),
+      lastRemoteSaveSucceeded,
+      remoteError: lastRemoteError
+    });
+  }
+
+  function setPersistPhase(next, extras = {}) {
+    if (extras.remoteError !== undefined) lastRemoteError = extras.remoteError;
+    if (extras.lastRemoteSaveSucceeded !== undefined) {
+      lastRemoteSaveSucceeded = extras.lastRemoteSaveSucceeded;
+    }
+    persistPhase = next;
+    persistListeners.forEach((listener) => {
+      try { listener(persistSnapshot()); } catch {}
+    });
+  }
+
+  function subscribePersistStatus(listener) {
+    if (typeof listener !== "function") return () => {};
+    persistListeners.add(listener);
+    try { listener(persistSnapshot()); } catch {}
+    return () => persistListeners.delete(listener);
+  }
+
+  function currentPersistableFingerprint() {
+    return persistableActivityStateFingerprint(readLocal() || pendingState || {});
+  }
+
+  function persistableForRemote(state) {
+    const sanitized = sanitizeActivityState(state || {});
+    const next = { ...sanitized };
+    delete next.restoreSource;
+    delete next.serverBacked;
+    delete next.pendingSave;
+    return next;
+  }
+
+  function cancelRetry() {
+    if (retryTimer != null) {
+      clearTimeoutFn(retryTimer);
+      retryTimer = null;
+    }
+  }
+
+  function scheduleRetry() {
+    if (destroyed || !dirty) return;
+    if (retryTimer != null || saving) return;
+    if (retryAttempt >= retryBackoff.length) {
+      setPersistPhase(ACTIVITY_STATE_PERSIST_STATUS.failed);
+      return;
+    }
+    const wait = retryBackoff[Math.min(retryAttempt, retryBackoff.length - 1)] || 2000;
+    retryAttempt += 1;
+    retryTimer = setTimeoutFn(() => {
+      retryTimer = null;
+      if (!destroyed && isDirty()) flush();
+    }, wait);
+    setPersistPhase(ACTIVITY_STATE_PERSIST_STATUS.failed);
   }
 
   function maybeApplyDeferredRemote() {
@@ -483,12 +603,24 @@ export function createActivityStateStore({
 
   async function pushServer(state) {
     if (!signedIn(auth) || typeof api?.saveActivityState !== "function") return null;
+    const identity = await waitForSessionIdentity(auth, {
+      timeoutMs: persistWaitMs,
+      setTimeoutFn
+    });
+    if (!identity.ready) {
+      dirty = true;
+      writeLocal({ ...state, pendingSave: true });
+      lastRemoteError = identity.pending ? SESSION_PENDING_CODE : "AUTH_REQUIRED";
+      scheduleRetry();
+      return null;
+    }
     syncLearnerDedupeScope(auth);
-    const sanitized = sanitizeActivityState(state || {});
+    const sanitized = persistableForRemote(state);
     const updatedAt = state?.updatedAt || new Date().toISOString();
-    const dedupeKey = readDedupeKey();
-    const fingerprint = persistableActivityStateFingerprint(sanitized);
-    if (writeFingerprints.get(dedupeKey) === fingerprint) {
+    const sentFingerprint = persistableActivityStateFingerprint(sanitized);
+    if (writeFingerprints.get(readDedupeKey()) === sentFingerprint && !dirty) {
+      lastRemoteSaveSucceeded = true;
+      setPersistPhase(ACTIVITY_STATE_PERSIST_STATUS.synced, { lastRemoteSaveSucceeded: true, remoteError: null });
       return {
         activityKey: key,
         activityVersion: version,
@@ -499,6 +631,9 @@ export function createActivityStateStore({
         completedAt: state?.completedAt || null
       };
     }
+    saving = true;
+    saveInFlightFingerprint = sentFingerprint;
+    setPersistPhase(ACTIVITY_STATE_PERSIST_STATUS.saving);
     try {
       const saved = asRecord(firstRow(await api.saveActivityState({
         activityKey: key,
@@ -507,17 +642,36 @@ export function createActivityStateStore({
         clientUpdatedAt: updatedAt,
         hubCode
       })));
-      writeFingerprints.set(dedupeKey, fingerprint);
+      const currentFingerprint = currentPersistableFingerprint();
+      if (currentFingerprint !== sentFingerprint) {
+        dirty = true;
+        setPersistPhase(ACTIVITY_STATE_PERSIST_STATUS.pending, { lastRemoteSaveSucceeded: false });
+        return saved;
+      }
+      writeFingerprints.set(readDedupeKey(), sentFingerprint);
       rememberPersisted(saved);
       dirty = false;
+      retryAttempt = 0;
+      lastRemoteSaveSucceeded = true;
+      lastRemoteError = null;
       if (saved?.state) writeLocal({ ...saved.state, updatedAt: saved.updatedAt, startedAt: saved.startedAt });
+      setPersistPhase(ACTIVITY_STATE_PERSIST_STATUS.synced, { lastRemoteSaveSucceeded: true, remoteError: null });
       maybeApplyDeferredRemote();
       return saved;
     } catch (error) {
-      writeFingerprints.delete(dedupeKey);
+      writeFingerprints.delete(readDedupeKey());
       dirty = true;
+      lastRemoteSaveSucceeded = false;
+      lastRemoteError = String(error?.code || error?.message || "SAVE_FAILED");
       writeLocal({ ...state, updatedAt, pendingSave: true });
+      setPersistPhase(ACTIVITY_STATE_PERSIST_STATUS.failed, {
+        lastRemoteSaveSucceeded: false,
+        remoteError: lastRemoteError
+      });
       throw error;
+    } finally {
+      saving = false;
+      saveInFlightFingerprint = null;
     }
   }
 
@@ -534,15 +688,27 @@ export function createActivityStateStore({
       clearTimeoutFn(pendingTimer);
       pendingTimer = null;
     }
-    if (!pendingState) return Promise.resolve(null);
-    const next = pendingState;
+    if (saving) return Promise.resolve(null);
+    const next = pendingState || (dirty ? readLocal() : null);
+    if (!next || isCompletedAttemptSnapshot(next)) return Promise.resolve(null);
     pendingState = null;
-    return pushServer(next).catch(() => next);
+    setPersistPhase(ACTIVITY_STATE_PERSIST_STATUS.saving);
+    return pushServer(next).then((saved) => {
+      if (pendingState && persistableActivityStateFingerprint(pendingState) !== persistableActivityStateFingerprint(next)) {
+        return flush();
+      }
+      return saved;
+    }).catch(() => {
+      scheduleRetry();
+      return next;
+    });
   }
 
   function save(state, options = {}) {
     syncLearnerDedupeScope(auth);
     const sanitized = sanitizeActivityState(state || {});
+    delete sanitized.restoreSource;
+    delete sanitized.serverBacked;
     const fingerprint = persistableActivityStateFingerprint(sanitized);
     const stamped = {
       ...sanitized,
@@ -553,15 +719,20 @@ export function createActivityStateStore({
     if (!unchanged) dirty = true;
     if (!signedIn(auth) || options.remote === false) {
       if (options.remote === false) cancelPending();
+      if (!unchanged) setPersistPhase(ACTIVITY_STATE_PERSIST_STATUS.pending);
       return stamped;
     }
     if (unchanged) {
       cancelPending();
       dirty = false;
+      retryAttempt = 0;
+      cancelRetry();
+      setPersistPhase(ACTIVITY_STATE_PERSIST_STATUS.synced, { lastRemoteSaveSucceeded: true, remoteError: null });
       maybeApplyDeferredRemote();
       return stamped;
     }
     pendingState = stamped;
+    setPersistPhase(ACTIVITY_STATE_PERSIST_STATUS.pending);
     if (options.immediate) {
       flush();
       return stamped;
@@ -583,14 +754,15 @@ export function createActivityStateStore({
 
   async function readServerStateWithPolicy() {
     const learnerKey = learnerCacheKey(auth);
+    const ready = sessionIdentityReady(auth);
     let attempt = 0;
     let identityRetried = false;
     for (;;) {
       try {
         return await readServerState();
       } catch (error) {
-        const kind = classifyActivityStateError(error);
-        if (kind === "permanent" || isLearnerIdentityError(error)) {
+        const kind = classifyActivityStateError(error, { sessionReady: ready });
+        if (kind === "permanent" || (ready && isLearnerIdentityError(error))) {
           if (!identityRetried && isLearnerIdentityError(error)) {
             identityRetried = true;
             const recovery = await recoverLearnerIdentityOnce({ api, learnerKey });
@@ -614,10 +786,31 @@ export function createActivityStateStore({
     }
   }
 
+  function localPendingWins(local, remoteRecord) {
+    if (!activityStateHasWork(local)) return false;
+    const remoteState = remoteRecord?.state || remoteRecord;
+    if (dirty || local?.pendingSave === true) return true;
+    if (!activityStateHasWork(remoteState)) return true;
+    const remoteAt = parseTime(remoteRecord?.updatedAt || remoteState?.updatedAt);
+    return parseTime(local.updatedAt) > remoteAt;
+  }
+
   async function hydrate(preferredLocal, options = {}) {
     const local = readLocal(preferredLocal);
     syncLearnerDedupeScope(auth);
     if (!signedIn(auth) || typeof api?.getActivityState !== "function") {
+      if (local) writeLocal(local);
+      return local;
+    }
+    const identity = await waitForSessionIdentity(auth, {
+      timeoutMs: persistWaitMs,
+      setTimeoutFn
+    });
+    if (!identity.ready) {
+      retrievalFailed = Boolean(identity.pending);
+      if (identity.pending) {
+        setPersistPhase(ACTIVITY_STATE_PERSIST_STATUS.retrievalFailed, { remoteError: SESSION_PENDING_CODE });
+      }
       if (local) writeLocal(local);
       return local;
     }
@@ -629,7 +822,7 @@ export function createActivityStateStore({
     const fresh = Boolean(options && options.fresh);
     const dedupeKey = readDedupeKey();
     if (fresh) completedReads.delete(dedupeKey);
-    else if (completedReads.has(dedupeKey)) {
+    else if (completedReads.has(dedupeKey) && !retrievalFailed) {
       return local;
     }
 
@@ -642,11 +835,9 @@ export function createActivityStateStore({
       if (isActivityStateLearnerBlocked(learnerKey)) {
         return readLocal(preferredLocal);
       }
-      if (!fresh && completedReads.has(dedupeKey)) {
+      if (!fresh && completedReads.has(dedupeKey) && !retrievalFailed) {
         return readLocal(preferredLocal);
       }
-      // Permanent failures must not spawn a follow-up RPC. Transient failures
-      // that never completed may retry once the inflight slot is free.
       if (inflightReads.has(dedupeKey)) {
         try {
           await inflightReads.get(dedupeKey);
@@ -660,28 +851,84 @@ export function createActivityStateStore({
       try {
         server = await readServerStateWithPolicy();
       } catch (error) {
+        retrievalFailed = true;
+        setPersistPhase(ACTIVITY_STATE_PERSIST_STATUS.retrievalFailed, {
+          remoteError: String(error?.code || error?.message || "GET_FAILED")
+        });
         throw error;
       }
-      completedReads.add(dedupeKey);
+      retrievalFailed = false;
       if (server) rememberPersisted(server);
-      const resolved = reconcileActivityState(
-        { state: local, updatedAt: local?.updatedAt },
-        server ? { state: server.state, updatedAt: server.updatedAt } : null
-      );
-      if (resolved.state) {
+
+      let completedSnapshot = null;
+      if (!activityStateHasWork(server?.state)) {
+        try {
+          completedSnapshot = await readCompletedAttemptSnapshot(api, key, version);
+        } catch (error) {
+          retrievalFailed = true;
+          setPersistPhase(ACTIVITY_STATE_PERSIST_STATUS.retrievalFailed, {
+            remoteError: String(error?.code || error?.message || "ATTEMPT_RESTORE_FAILED")
+          });
+          throw error;
+        }
+      }
+
+      if (!retrievalFailed) completedReads.add(dedupeKey);
+
+      const inProgress = server && activityStateHasWork(server.state)
+        ? { state: server.state, updatedAt: server.updatedAt }
+        : null;
+      const completed = completedSnapshot && activityStateHasWork(completedSnapshot.state)
+        ? completedSnapshot
+        : null;
+
+      let resolved;
+      if (localPendingWins(local, inProgress || completed)) {
+        resolved = {
+          state: local,
+          updatedAt: local?.updatedAt,
+          source: "local-pending",
+          migrate: !isCompletedAttemptSnapshot(local)
+        };
+      } else if (inProgress) {
+        resolved = reconcileActivityState(
+          { state: local, updatedAt: local?.updatedAt },
+          inProgress
+        );
+      } else if (completed) {
+        resolved = {
+          state: sanitizeActivityState(completed.state),
+          updatedAt: completed.updatedAt,
+          source: "completed-attempt",
+          migrate: false
+        };
+      } else {
+        resolved = reconcileActivityState(
+          { state: local, updatedAt: local?.updatedAt },
+          null
+        );
+      }
+
+      if (activityStateHasWork(resolved.state) || resolved.source === "completed-attempt") {
         const next = {
           ...resolved.state,
           updatedAt: resolved.updatedAt || resolved.state.updatedAt || new Date().toISOString(),
           startedAt: resolved.state.startedAt || server?.startedAt || resolved.state.startedAt
         };
         writeLocal(next);
-        if (resolved.source === "server") dirty = false;
-        if (resolved.migrate) {
-          try { await pushServer(next); } catch {}
+        if (resolved.source === "server" || resolved.source === "completed-attempt") {
+          dirty = false;
+          setPersistPhase(ACTIVITY_STATE_PERSIST_STATUS.synced, { lastRemoteSaveSucceeded: true, remoteError: null });
         }
-        if (options.remote && resolved.source === "server") notifyRemote(next);
+        if (resolved.migrate && !isCompletedAttemptSnapshot(next)) {
+          try { await pushServer(next); } catch { scheduleRetry(); }
+        }
+        if (options.remote && (resolved.source === "server" || resolved.source === "completed-attempt")) {
+          notifyRemote(next);
+        }
         return next;
       }
+      setPersistPhase(ACTIVITY_STATE_PERSIST_STATUS.idle, { lastRemoteSaveSucceeded: true, remoteError: null });
       return null;
     })();
 
@@ -698,15 +945,18 @@ export function createActivityStateStore({
 
   async function clear(clearOptions = {}) {
     cancelPending();
+    cancelRetry();
     invalidateActivityStateReads({
       learnerKey: learnerCacheKey(auth),
       activityKey: key,
       activityVersion: version
     });
     dirty = false;
+    retrievalFailed = false;
     knownRevision = 0;
     knownUpdatedAt = 0;
     pendingRemoteRevision = 0;
+    setPersistPhase(ACTIVITY_STATE_PERSIST_STATUS.idle, { lastRemoteSaveSucceeded: null, remoteError: null });
     if (clearOptions.local !== false) {
       removeKey(storage, cacheKey());
       (Array.isArray(legacyKeys) ? legacyKeys : []).forEach((legacyKey) => removeKey(storage, legacyKey));
@@ -718,9 +968,17 @@ export function createActivityStateStore({
     }
   }
 
+  function onOnline() {
+    if (destroyed || !isDirty()) return;
+    retryAttempt = Math.min(retryAttempt, 1);
+    cancelRetry();
+    flush();
+  }
+
   function destroy() {
     destroyed = true;
-    if (pendingTimer != null) clearTimeoutFn(pendingTimer);
+    cancelPending();
+    cancelRetry();
     if (coalesceTimer != null) {
       clearTimeoutFn(coalesceTimer);
       coalesceTimer = null;
@@ -729,10 +987,15 @@ export function createActivityStateStore({
       resolvers.forEach((fn) => fn(null));
     }
     listeners.clear();
+    persistListeners.clear();
     storeRegistry.delete(registryKey);
     if (typeof globalThis.removeEventListener === "function") {
       globalThis.removeEventListener("pagehide", onHide);
       globalThis.removeEventListener("beforeunload", onHide);
+      globalThis.removeEventListener("online", onOnline);
+    }
+    if (typeof removeEventListenerFn === "function") {
+      try { removeEventListenerFn("online", onOnline); } catch {}
     }
     if (visibilityNode && typeof visibilityNode.removeEventListener === "function") {
       visibilityNode.removeEventListener("visibilitychange", onVisibility);
@@ -752,6 +1015,10 @@ export function createActivityStateStore({
   if (typeof globalThis.addEventListener === "function") {
     globalThis.addEventListener("pagehide", onHide);
     globalThis.addEventListener("beforeunload", onHide);
+    globalThis.addEventListener("online", onOnline);
+  }
+  if (typeof addEventListenerFn === "function") {
+    try { addEventListenerFn("online", onOnline); } catch {}
   }
   if (visibilityNode) {
     visibilityNode.addEventListener("visibilitychange", onVisibility);
@@ -767,8 +1034,14 @@ export function createActivityStateStore({
     clear,
     destroy,
     subscribe,
+    subscribePersistStatus,
     handleRemoteInvalidation,
     isDirty,
+    isSaving: () => saving,
+    lastRemoteSaveSucceeded: () => lastRemoteSaveSucceeded,
+    retryPending: () => retryTimer != null,
+    remoteError: () => lastRemoteError,
+    persistStatus: persistSnapshot,
     markDirty,
     knownRevision: () => knownRevision,
     pendingRemoteRevision: () => pendingRemoteRevision,
