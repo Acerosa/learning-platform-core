@@ -239,6 +239,8 @@ Security: hub-scoped assignment reads send only the authored hub code. A hub mus
 - `clearActivityState(activityKey, activityVersion)` → mark the draft completed.
 - `createStore({ activityKey, activityVersion, storage, legacyKeys, debounceMs })` → local cache plus server persistence.
 
+`platform.knowledgeReport.startAdditionalTime(activityKey, activityVersion)` asks the server to start the Knowledge Report additional-time period. Saving a draft does not start it. The server rejects the call when the learner is not eligible.
+
 Authenticated learner in-progress activity state is persisted server-side and restored across browser sessions and devices. If `get_activity_state` returns no in-progress draft, `createStore().hydrate()` reads the learner's latest **same-key, same-version** completed attempt plus `my_responses` and reconstructs the activity UI. That restore is read-only: it does not call `save_activity_state` or `submit_attempt`. A failed GET is not interned as “no work”. Unsynchronised local work wins over an older completed snapshot. Browser storage may only be used as cache, resilience, or unauthenticated fallback. Drafts are not official attempts, scores, or derived progress.
 
 Store persistence status: `isDirty()`, `isSaving()`, `lastRemoteSaveSucceeded()`, `retryPending()`, `remoteError()`, `persistStatus()`, `subscribePersistStatus()`. Status values are `idle`, `saving`, `synced`, `pending`, `failed`, and `retrieval-failed`. Remote save failures keep local pending work and retry on bounded backoff and the browser `online` event. Only the acknowledged fingerprint is marked synced; an older response cannot clean a newer local revision.

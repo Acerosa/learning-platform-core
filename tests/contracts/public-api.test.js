@@ -161,6 +161,7 @@ test("createPlatform returns the canonical service facade without raw client acc
     "enrolments",
     "features",
     "initialise",
+    "knowledgeReport",
     "learner",
     "marking",
     "onboarding",
