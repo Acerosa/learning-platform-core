@@ -297,6 +297,12 @@ export function createPlatform(options = {}, dependencies = {}) {
     progress,
     submission,
     marking,
+    knowledgeReport: Object.freeze({
+      startAdditionalTime: (activityKey, activityVersion) => api.startKnowledgeReportAdditionalTime({
+        activityKey,
+        activityVersion
+      })
+    }),
     curriculum,
     state,
     theme,

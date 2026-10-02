@@ -419,6 +419,10 @@ function createLearnerApi({ client, schema = "api", logger } = {}) {
       p_client_updated_at: clientUpdatedAt,
       p_hub_code: hubCode
     }),
+    startKnowledgeReportAdditionalTime: ({ activityKey, activityVersion } = {}) => rpc("start_knowledge_report_additional_time", {
+      p_activity_key: activityKey,
+      p_activity_version: activityVersion
+    }),
     clearActivityState: ({ activityKey, activityVersion } = {}) => rpc("clear_activity_state", {
       p_activity_key: activityKey,
       p_activity_version: activityVersion

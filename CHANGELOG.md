@@ -4,6 +4,14 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## Unreleased
 
+## 0.2.27 - 2026-10-02
+
+### Added
+
+- `platform.knowledgeReport.startAdditionalTime(activityKey, activityVersion)` calls
+  `api.start_knowledge_report_additional_time`. The server decides whether additional
+  time is available. The hub does not start the extra period by saving a draft.
+
 ## 0.2.26 - 2026-09-22
 
 ### Added
