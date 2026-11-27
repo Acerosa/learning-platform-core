@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-#!/usr/bin/env node
 
 // src/deployment-health/load-config.js
 import { readFile } from "node:fs/promises";

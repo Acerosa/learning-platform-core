@@ -4,6 +4,12 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## Unreleased
 
+## 0.2.29 - 2026-11-27
+
+### Fixed
+
+- Remove duplicate shebang from `deployment-health` CLI source so `node dist/deployment-health.mjs` runs cleanly.
+
 ## 0.2.28 - 2026-11-27
 
 ### Added

@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 import { loadPagesHealthConfig } from "./load-config.js";
 import { runPagesHealthChecks, runPagesHealthFleet } from "./run.js";
 
