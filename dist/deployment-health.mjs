@@ -52,8 +52,13 @@ function ensureTrailingSlash(url) {
   return value.endsWith("/") ? value : `${value}/`;
 }
 function joinUrl(baseUrl, relativePath) {
+  const raw = String(relativePath || "");
+  if (/^https?:\/\//i.test(raw)) return raw;
+  if (raw.startsWith("/")) {
+    return new URL(raw, new URL(baseUrl).origin).toString();
+  }
   const base = ensureTrailingSlash(baseUrl);
-  const path = String(relativePath || "").replace(/^\.\//, "").replace(/^\/+/, "");
+  const path = raw.replace(/^\.\//, "");
   return new URL(path, base).toString();
 }
 function pathnameOf(url) {
@@ -418,8 +423,8 @@ async function checkPagesDeploymentSource(config = {}, options = {}) {
       return checkResult(
         "pages.source",
         false,
-        `GitHub Pages is not enabled for ${repository}.`,
-        "error"
+        token ? `GitHub Pages is not enabled for ${repository}.` : `GitHub Pages API returned 404 for ${repository}. Provide GITHUB_TOKEN to verify workflow deployment source.`,
+        token ? "error" : "warning"
       );
     }
     if (response.status === 401 || response.status === 403) {

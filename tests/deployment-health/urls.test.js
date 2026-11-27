@@ -29,3 +29,10 @@ test("joinUrl resolves relative asset paths against Pages base", () => {
     "https://acerosa.github.io/tlevel-software-development-hub/assets/main.js"
   );
 });
+
+test("joinUrl keeps absolute asset paths rooted at host origin", () => {
+  assert.equal(
+    joinUrl("https://acerosa.github.io/learning-platform-admin/", "/learning-platform-admin/assets/main.js"),
+    "https://acerosa.github.io/learning-platform-admin/assets/main.js"
+  );
+});

@@ -4,6 +4,13 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## Unreleased
 
+## 0.2.30 - 2026-11-27
+
+### Fixed
+
+- Resolve absolute Pages asset paths from the host origin (Central Admin base path).
+- Treat unauthenticated Pages API 404 as a warning so fleet checks can still verify live assets.
+
 ## 0.2.29 - 2026-11-27
 
 ### Fixed
