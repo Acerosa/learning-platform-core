@@ -5,8 +5,15 @@ export function ensureTrailingSlash(url) {
 }
 
 export function joinUrl(baseUrl, relativePath) {
+  const raw = String(relativePath || "");
+  if (/^https?:\/\//i.test(raw)) return raw;
+  // Absolute site paths (e.g. /learning-platform-admin/assets/x.js) must resolve
+  // from the host origin, not by appending under the current Pages base path.
+  if (raw.startsWith("/")) {
+    return new URL(raw, new URL(baseUrl).origin).toString();
+  }
   const base = ensureTrailingSlash(baseUrl);
-  const path = String(relativePath || "").replace(/^\.\//, "").replace(/^\/+/, "");
+  const path = raw.replace(/^\.\//, "");
   return new URL(path, base).toString();
 }
 

@@ -43,11 +43,14 @@ export async function checkPagesDeploymentSource(config = {}, options = {}) {
   try {
     const response = await fetchFn(`https://api.github.com/repos/${repository}/pages`, { headers });
     if (response.status === 404) {
+      // Without a token the Pages API often returns 404 even when github.io is live.
       return checkResult(
         "pages.source",
         false,
-        `GitHub Pages is not enabled for ${repository}.`,
-        "error"
+        token
+          ? `GitHub Pages is not enabled for ${repository}.`
+          : `GitHub Pages API returned 404 for ${repository}. Provide GITHUB_TOKEN to verify workflow deployment source.`,
+        token ? "error" : "warning"
       );
     }
     if (response.status === 401 || response.status === 403) {
