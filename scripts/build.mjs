@@ -41,6 +41,22 @@ await Promise.all([
   }),
   build({
     ...shared,
+    entryPoints: ["src/deployment-health/index.js"],
+    outfile: "dist/deployment-health.esm.js",
+    format: "esm",
+    platform: "node"
+  }),
+  build({
+    ...shared,
+    entryPoints: ["src/deployment-health/cli.js"],
+    outfile: "dist/deployment-health.mjs",
+    format: "esm",
+    platform: "node",
+    banner: { js: "#!/usr/bin/env node" },
+    external: ["playwright"]
+  }),
+  build({
+    ...shared,
     entryPoints: ["src/advanced.js"],
     outfile: "dist/advanced.esm.js",
     format: "esm"
