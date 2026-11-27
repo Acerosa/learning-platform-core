@@ -31,6 +31,8 @@ The runner does not replace backend/RLS security review, live API compatibility 
 
 Those remain required LHDS certification gates. The runner is intentionally small at version 0.1.0 and should grow only when a contract is stable across hubs.
 
+Live GitHub Pages deployment verification (MIME types, boot, curriculum source) is covered separately by [deployment health checks](deployment-health.md).
+
 ## Hub Security Baseline v1
 
 Learner hubs run the Node scanner (no network):

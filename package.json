@@ -1,17 +1,21 @@
 {
   "name": "@learning-platform/core",
-  "version": "0.2.27",
+  "version": "0.2.28",
   "description": "Framework-free shared frontend services and UI for Learning Platform learner hubs.",
   "type": "module",
   "main": "./dist/learning-platform-core.esm.js",
   "module": "./dist/learning-platform-core.esm.js",
   "browser": "./dist/learning-platform-core.iife.js",
+  "bin": {
+    "lp-pages-health": "./dist/deployment-health.mjs"
+  },
   "exports": {
     ".": "./dist/learning-platform-core.esm.js",
     "./curriculum-runtime": "./dist/curriculum-runtime.esm.js",
     "./advanced": "./dist/advanced.esm.js",
     "./conformance": "./dist/conformance.esm.js",
     "./hub-security": "./dist/hub-security.mjs",
+    "./deployment-health": "./dist/deployment-health.esm.js",
     "./theme.css": "./dist/theme.css",
     "./tokens.css": "./dist/tokens.css",
     "./package.json": "./package.json"
@@ -28,8 +32,13 @@
     "syntax": "node scripts/check-syntax.mjs",
     "test": "node --test",
     "test:conformance": "node --test tests/conformance/conformance.test.js tests/conformance/hub-security.test.js",
+    "test:deployment-health": "node --test tests/deployment-health/*.test.js",
     "test:contracts": "node --test tests/contracts/public-api.test.js",
+    "pages-health": "node dist/deployment-health.mjs",
     "check": "npm run syntax && npm run build && npm test"
+  },
+  "optionalDependencies": {
+    "playwright": "^1.56.1"
   },
   "keywords": [
     "learning-platform",

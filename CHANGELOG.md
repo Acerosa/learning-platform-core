@@ -4,6 +4,18 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## Unreleased
 
+## 0.2.28 - 2026-11-27
+
+### Added
+
+- Reusable GitHub Pages deployment health checks (`./deployment-health`,
+  `dist/deployment-health.mjs` / `lp-pages-health`) covering Pages workflow source,
+  compiled JS assets, JavaScript MIME types, forbidden TypeScript source refs,
+  bounded post-deploy retries, optional Playwright boot/white-page probes, and
+  anonymous published-curriculum retrieval (including unexpected bundled fallback
+  signals). Documentation-only Pages targets can be marked `docs-only` and skipped.
+  See [deployment-health.md](docs/deployment-health.md).
+
 ## 0.2.27 - 2026-10-02
 
 ### Added

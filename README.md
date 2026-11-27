@@ -58,6 +58,7 @@ Build outputs:
 - `dist/advanced.esm.js` — explicitly non-stable low-level factories for exceptional integrations.
 - `dist/conformance.esm.js` — standalone conformance entry.
 - `dist/hub-security.mjs` — Node Hub Security Baseline scanner for learner hubs.
+- `dist/deployment-health.mjs` — GitHub Pages deployment health CLI (`lp-pages-health`).
 - `dist/theme.css` and `dist/tokens.css` — shared visual layer.
 
 ## Static browser usage
